@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 40" fill="none">
+  <!-- Horse head icon -->
+  <path d="M8 32 C8 20 14 12 22 10 L26 6 L30 10 C34 8 38 10 38 16 L36 20 C40 22 40 28 36 30 L32 30 C30 34 26 36 22 36 C14 36 8 34 8 32Z" fill="#138471"/>
+  <circle cx="26" cy="14" r="2" fill="#fff"/>
+  <!-- Wordmark -->
+  <text x="48" y="27" font-family="Inter, sans-serif" font-size="18" font-weight="700" fill="#0f172a" letter-spacing="-0.5">Equicore</text>
+</svg>

@@ -1,0 +1,13 @@
+---
+import Layout from '../../../layouts/Layout.astro';
+import Header from '../../../components/dashboard/Header';
+import { EquineProfile } from '../../../components/dashboard/EquineProfile';
+---
+
+<Layout title="Trovão — Perfil do Equino | Equicore">
+  <Header client:load currentPath={Astro.url.pathname} />
+
+  <main class="w-full max-w-5xl mx-auto px-4 md:px-8 py-6">
+    <EquineProfile client:load />
+  </main>
+</Layout>
