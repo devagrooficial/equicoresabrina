@@ -1,4 +1,5 @@
 ---
+export const prerender = false;
 // ─── Imports ──────────────────────────────────────────────────────────────────
 // REGRA: caminhos relativos simples, sempre com chaves { }
 
@@ -62,103 +63,102 @@ const EQUINES: Equine[] = [
         </span>
       </div>
 
-      <!-- KPI Cards grid 4 colunas -->
-      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <!-- KPI Cards grid: 2x2 mobile, 4 colunas desktop -->
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
 
         <!-- KPI: Total de Equinos -->
-        <div class="rounded-2xl border bg-card p-5 flex flex-col gap-3 transition-all duration-200 hover:shadow-md hover:-translate-y-px"
+        <div class="rounded-2xl border bg-card p-3 md:p-5 flex flex-col gap-2 md:gap-3 transition-all duration-200 hover:shadow-md hover:-translate-y-px"
              style="border-color: hsl(var(--border));">
           <div class="flex items-center justify-between">
-            <span class="text-xs font-semibold tracking-widest uppercase"
+            <span class="text-[10px] md:text-xs font-semibold tracking-widest uppercase leading-tight"
                   style="color: hsl(var(--muted-foreground));">
               Total de Equinos
             </span>
-            <div class="w-8 h-8 rounded-xl flex items-center justify-center"
+            <div class="w-7 h-7 md:w-8 md:h-8 rounded-xl flex items-center justify-center flex-shrink-0"
                  style="background: hsl(168 83% 29% / 0.1);">
-              <!-- Horse icon -->
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="hsl(168, 83%, 29%)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="hsl(168, 83%, 29%)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M13 2C11 2 10 3 10 5v2H7L5 9v2l2 1v4l-2 2v2h4v-2l2-1 2 1v2h4v-2l-2-2v-4l2-1V9l-2-2h-3V5c0-2-1-3-1-3z"/>
               </svg>
             </div>
           </div>
-          <div class="flex items-end gap-2">
-            <span class="text-4xl font-black tracking-tight" style="color: hsl(var(--foreground));">3</span>
-            <span class="text-sm pb-1" style="color: hsl(var(--muted-foreground));">equinos</span>
+          <div class="flex items-end gap-1.5">
+            <span class="text-3xl md:text-4xl font-black tracking-tight" style="color: hsl(var(--foreground));">3</span>
+            <span class="text-xs md:text-sm pb-0.5" style="color: hsl(var(--muted-foreground));">equinos</span>
           </div>
-          <p class="text-xs" style="color: hsl(var(--muted-foreground));">Cadastrados no sistema</p>
+          <p class="text-[11px] md:text-xs" style="color: hsl(var(--muted-foreground));">Cadastrados no sistema</p>
         </div>
 
         <!-- KPI: Saúde em Dia -->
-        <div class="rounded-2xl border bg-card p-5 flex flex-col gap-3 transition-all duration-200 hover:shadow-md hover:-translate-y-px"
+        <div class="rounded-2xl border bg-card p-3 md:p-5 flex flex-col gap-2 md:gap-3 transition-all duration-200 hover:shadow-md hover:-translate-y-px"
              style="border-color: hsl(142 71% 45% / 0.3); background: hsl(142 71% 45% / 0.04);">
           <div class="flex items-center justify-between">
-            <span class="text-xs font-semibold tracking-widest uppercase"
+            <span class="text-[10px] md:text-xs font-semibold tracking-widest uppercase leading-tight"
                   style="color: hsl(142 71% 35%);">
               Saúde em Dia
             </span>
-            <div class="w-8 h-8 rounded-xl flex items-center justify-center"
+            <div class="w-7 h-7 md:w-8 md:h-8 rounded-xl flex items-center justify-center flex-shrink-0"
                  style="background: hsl(142 71% 45% / 0.12);">
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="hsl(142, 71%, 35%)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="hsl(142, 71%, 35%)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
                 <polyline points="22 4 12 14.01 9 11.01"/>
               </svg>
             </div>
           </div>
-          <div class="flex items-end gap-2">
-            <span class="text-4xl font-black tracking-tight" style="color: hsl(142 71% 35%);">1</span>
-            <span class="text-sm pb-1 flex items-center gap-1" style="color: hsl(142 71% 35%);">
-              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+          <div class="flex items-end gap-1.5">
+            <span class="text-3xl md:text-4xl font-black tracking-tight" style="color: hsl(142 71% 35%);">1</span>
+            <span class="text-xs md:text-sm pb-0.5 flex items-center gap-0.5" style="color: hsl(142 71% 35%);">
+              <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
               em ordem
             </span>
           </div>
-          <p class="text-xs" style="color: hsl(142 71% 40%);">Documentação e vacinas OK</p>
+          <p class="text-[11px] md:text-xs" style="color: hsl(142 71% 40%);">Documentação e vacinas OK</p>
         </div>
 
         <!-- KPI: Atenção -->
-        <div class="rounded-2xl border bg-card p-5 flex flex-col gap-3 transition-all duration-200 hover:shadow-md hover:-translate-y-px"
+        <div class="rounded-2xl border bg-card p-3 md:p-5 flex flex-col gap-2 md:gap-3 transition-all duration-200 hover:shadow-md hover:-translate-y-px"
              style="border-color: hsl(38 92% 50% / 0.3); background: hsl(38 92% 50% / 0.04);">
           <div class="flex items-center justify-between">
-            <span class="text-xs font-semibold tracking-widest uppercase"
+            <span class="text-[10px] md:text-xs font-semibold tracking-widest uppercase leading-tight"
                   style="color: hsl(38 92% 30%);">
               Atenção
             </span>
-            <div class="w-8 h-8 rounded-xl flex items-center justify-center"
+            <div class="w-7 h-7 md:w-8 md:h-8 rounded-xl flex items-center justify-center flex-shrink-0"
                  style="background: hsl(38 92% 50% / 0.12);">
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="hsl(38, 92%, 30%)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="hsl(38, 92%, 30%)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/>
                 <path d="M12 9v4"/><path d="M12 17h.01"/>
               </svg>
             </div>
           </div>
-          <div class="flex items-end gap-2">
-            <span class="text-4xl font-black tracking-tight" style="color: hsl(38 92% 30%);">1</span>
-            <span class="text-sm pb-1" style="color: hsl(38 92% 35%);">vacina vencendo</span>
+          <div class="flex items-end gap-1.5">
+            <span class="text-3xl md:text-4xl font-black tracking-tight" style="color: hsl(38 92% 30%);">1</span>
+            <span class="text-xs md:text-sm pb-0.5" style="color: hsl(38 92% 35%);">vacina vencendo</span>
           </div>
-          <p class="text-xs" style="color: hsl(38 92% 35%);">Requer ação nos próximos dias</p>
+          <p class="text-[11px] md:text-xs" style="color: hsl(38 92% 35%);">Requer ação nos próximos dias</p>
         </div>
 
         <!-- KPI: Crítico -->
-        <div class="rounded-2xl border bg-card p-5 flex flex-col gap-3 transition-all duration-200 hover:shadow-md hover:-translate-y-px"
+        <div class="rounded-2xl border bg-card p-3 md:p-5 flex flex-col gap-2 md:gap-3 transition-all duration-200 hover:shadow-md hover:-translate-y-px"
              style="border-color: hsl(0 84.2% 60.2% / 0.3); background: hsl(0 84.2% 60.2% / 0.04);">
           <div class="flex items-center justify-between">
-            <span class="text-xs font-semibold tracking-widest uppercase"
+            <span class="text-[10px] md:text-xs font-semibold tracking-widest uppercase leading-tight"
                   style="color: hsl(0 84.2% 40%);">
               Crítico
             </span>
-            <div class="w-8 h-8 rounded-xl flex items-center justify-center"
+            <div class="w-7 h-7 md:w-8 md:h-8 rounded-xl flex items-center justify-center flex-shrink-0"
                  style="background: hsl(0 84.2% 60.2% / 0.12);">
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="hsl(0, 84.2%, 40%)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="hsl(0, 84.2%, 40%)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="12" cy="12" r="10"/>
                 <line x1="12" x2="12" y1="8" y2="12"/>
                 <line x1="12" x2="12.01" y1="16" y2="16"/>
               </svg>
             </div>
           </div>
-          <div class="flex items-end gap-2">
-            <span class="text-4xl font-black tracking-tight" style="color: hsl(0 84.2% 40%);">1</span>
-            <span class="text-sm pb-1" style="color: hsl(0 84.2% 45%);">requer ação urgente</span>
+          <div class="flex items-end gap-1.5">
+            <span class="text-3xl md:text-4xl font-black tracking-tight" style="color: hsl(0 84.2% 40%);">1</span>
+            <span class="text-xs md:text-sm pb-0.5" style="color: hsl(0 84.2% 45%);">requer ação urgente</span>
           </div>
-          <p class="text-xs" style="color: hsl(0 84.2% 45%);">Exame de Mormo vence em 3 dias</p>
+          <p class="text-[11px] md:text-xs" style="color: hsl(0 84.2% 45%);">Exame de Mormo vence em 3 dias</p>
         </div>
 
       </div>

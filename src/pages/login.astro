@@ -1,0 +1,9 @@
+---
+export const prerender = false;
+import AuthLayout from '../layouts/AuthLayout.astro';
+import LoginForm from '../components/auth/LoginForm';
+---
+
+<AuthLayout title="Entrar — EquiCore">
+  <LoginForm client:load />
+</AuthLayout>

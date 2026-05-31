@@ -2,13 +2,12 @@
 export const prerender = false;
 import Layout from '../../../layouts/Layout.astro';
 import Header from '../../../components/dashboard/Header';
-import { EquineProfile } from '../../../components/dashboard/EquineProfile';
+import AlertasPage from '../../../components/alertas/AlertasPage';
 ---
 
-<Layout title="Trovão — Perfil do Equino | Equicore">
+<Layout title="Alertas — EquiCore">
   <Header client:load currentPath={Astro.url.pathname} />
-
-  <main class="w-full max-w-5xl mx-auto px-4 md:px-8 py-6">
-    <EquineProfile client:load />
+  <main class="w-full max-w-4xl mx-auto px-4 md:px-8 py-8">
+    <AlertasPage client:load />
   </main>
 </Layout>

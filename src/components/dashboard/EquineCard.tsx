@@ -136,7 +136,7 @@ export const EquineCard = ({ equine }: { equine: Equine }) => {
 
   return (
     <a
-      href="/dashboard/equino"
+      href={`/dashboard/equino`}
       className="group flex items-center gap-4 px-4 py-3.5 rounded-xl border transition-all duration-200 cursor-pointer hover:shadow-md hover:-translate-y-px no-underline"
       style={{
         background: 'hsl(var(--card))',

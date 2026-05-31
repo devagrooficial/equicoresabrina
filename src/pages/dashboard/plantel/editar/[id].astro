@@ -1,0 +1,28 @@
+---
+export const prerender = false;
+import Layout from '../../../../layouts/Layout.astro';
+import Header from '../../../../components/dashboard/Header';
+import EquineFormStepper from '../../../../components/plantel/EquineFormStepper';
+import { createServerSupabaseClient } from '../../../../lib/supabase';
+
+const { id } = Astro.params;
+const responseHeaders = new Headers();
+const supabase = createServerSupabaseClient(Astro.request, responseHeaders);
+
+const { data: equine, error } = await supabase
+  .from('equinos')
+  .select('*')
+  .eq('id', id)
+  .single();
+
+if (error || !equine) {
+  return Astro.redirect('/dashboard/plantel');
+}
+---
+
+<Layout title={`Editar ${equine.name} — EquiCore`}>
+  <Header client:load currentPath={Astro.url.pathname} />
+  <main class="w-full max-w-3xl mx-auto px-4 md:px-8 py-8">
+    <EquineFormStepper client:load initialData={equine} equineId={equine.id} />
+  </main>
+</Layout>

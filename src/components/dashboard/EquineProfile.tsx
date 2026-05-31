@@ -1,5 +1,60 @@
 import { useState } from 'react';
+import { createClient } from '../../lib/supabase';
 type Tab = 'overview' | 'health' | 'documents';
+
+export interface EquineProfileData {
+  id: string;
+  name: string;
+  nickname?: string | null;
+  breed: string;
+  sex: string;
+  coat: string;
+  age: string;
+  registration: string;
+  healthStatus: string;
+  // Nutrição
+  feedKgDay?: number | null;
+  feedBrand?: string | null;
+  hayKgDay?: number | null;
+  hayType?: string | null;
+  waterAccess?: string | null;
+  supplements?: string | null;
+  // Físico
+  weightKg?: number | null;
+  heightCm?: number | null;
+  bcs?: number | null;
+  // Genealogia
+  fatherName?: string | null;
+  fatherReg?: string | null;
+  motherName?: string | null;
+  motherReg?: string | null;
+  patGrandfather?: string | null;
+  patGrandmother?: string | null;
+  matGrandfather?: string | null;
+  matGrandmother?: string | null;
+}
+
+const BREED_LABEL: Record<string, string> = {
+  QUARTO_DE_MILHA: 'Quarto de Milha', MANGALARGA_MARCHADOR: 'Mangalarga Marchador',
+  PURO_SANGUE_INGLES: 'Puro Sangue Inglês', LUSITANO: 'Lusitano',
+  BRASILEIRO_DE_HIPISMO: 'Brasileiro de Hipismo', CRIOULO: 'Crioulo',
+  CAMPOLINA: 'Campolina', APPALOOSA: 'Appaloosa', PAINT_HORSE: 'Paint Horse',
+  ANDALUZ: 'Andaluz', ARABE: 'Árabe', HAFLINGER: 'Haflinger',
+  FRIESIO: 'Frísio', ARDENÊS: 'Ardenês', OTHER: 'Outra raça',
+};
+const SEX_LABEL: Record<string, string> = {
+  GARANHAO: 'Garanhão', CASTRADO: 'Castrado', EGUA: 'Égua',
+  POTRANCA: 'Potranca', POTRO: 'Potro', POTRO_CASTRADO: 'Potro castrado',
+};
+const COAT_LABEL: Record<string, string> = {
+  ALAZAO: 'Alazão', TORDILHO: 'Tordilho', RUAO: 'Ruão', BAYO: 'Baio',
+  ZAINO: 'Zaino', ROSILHO: 'Rosilho', PAMPA: 'Pampa', MALHADO: 'Malhado',
+  PRETO: 'Preto', BRANCO: 'Branco', ISABELA: 'Isabela', PALOMINO: 'Palomino', OTHER: 'Outro',
+};
+
+function label(map: Record<string, string>, val: string) {
+  return map[val] ?? val;
+}
 
 const C = {
   green: 'hsl(168 83% 29%)',
@@ -120,20 +175,25 @@ function GeneNode({ node, highlight }: { node: GeneNode; highlight?: boolean }) 
   );
 }
 
-function GenealogyTree() {
-  // Tree data: root → parents → grandparents
+function GenealogyTree({ equine }: { equine: EquineProfileData }) {
+  const hasFather = !!equine.fatherName;
+  const hasMother = !!equine.motherName;
+  const hasTree = hasFather || hasMother;
+
+  if (!hasTree) return null;
+
   const tree = {
-    root: { name: 'Trovão', reg: 'ABQM 2019', coat: 'Tordilho', isRoot: true },
+    root: { name: equine.nickname || equine.name, reg: equine.registration, coat: label(COAT_LABEL, equine.coat), isRoot: true },
     parents: [
-      { name: 'Vento Forte', reg: 'ABQM', coat: 'Alazão', role: 'Pai' },
-      { name: 'Estrela da Manhã', coat: 'Ruão', role: 'Mãe' },
-    ],
+      hasFather ? { name: equine.fatherName!, reg: equine.fatherReg || undefined, coat: undefined, role: 'Pai' } : null,
+      hasMother ? { name: equine.motherName!, reg: equine.motherReg || undefined, coat: undefined, role: 'Mãe' } : null,
+    ].filter(Boolean) as GeneNode[],
     grandparents: [
-      { name: 'Relâmpago do Norte', coat: 'Tordilho', role: 'Avô Pat.' },
-      { name: 'Brisa do Campo', coat: 'Baia', role: 'Avó Pat.' },
-      { name: 'Rosa dos Ventos', coat: 'Alazã', role: 'Avó Mat.' },
-      { name: 'Trovão Real', coat: 'Ruão', role: 'Avô Mat.' },
-    ],
+      equine.patGrandfather ? { name: equine.patGrandfather, role: 'Avô Pat.' } : null,
+      equine.patGrandmother ? { name: equine.patGrandmother, role: 'Avó Pat.' } : null,
+      equine.matGrandfather ? { name: equine.matGrandfather, role: 'Avô Mat.' } : null,
+      equine.matGrandmother ? { name: equine.matGrandmother, role: 'Avó Mat.' } : null,
+    ].filter(Boolean) as GeneNode[],
   };
 
   // SVG connector lines — drawn over the layout
@@ -201,32 +261,51 @@ function GenealogyTree() {
   );
 }
 
-function NutritionTab() {
+function NutritionTab({ equine }: { equine: EquineProfileData }) {
   const items = [
-    { icon: ICONS.wheat, label: 'Ração diária', value: '6 kg/dia — Nutrequi Performance' },
-    { icon: ICONS.leaf, label: 'Feno', value: '8 kg/dia — Tifton' },
-    { icon: ICONS.drop, label: 'Água', value: 'Livre acesso (ad libitum)' },
-    { icon: ICONS.tag, label: 'Suplemento', value: 'Eletrólitos + Vitamina E' },
-  ];
+    equine.feedKgDay ? { icon: ICONS.wheat, label: 'Ração diária', value: `${equine.feedKgDay} kg/dia${equine.feedBrand ? ` — ${equine.feedBrand}` : ''}` } : null,
+    equine.hayKgDay ? { icon: ICONS.leaf, label: 'Feno', value: `${equine.hayKgDay} kg/dia${equine.hayType ? ` — ${equine.hayType}` : ''}` } : null,
+    equine.waterAccess ? { icon: ICONS.drop, label: 'Água', value: equine.waterAccess === 'LIVRE' ? 'Livre acesso (ad libitum)' : 'Controlado' } : null,
+    equine.supplements ? { icon: ICONS.tag, label: 'Suplemento', value: equine.supplements } : null,
+  ].filter(Boolean) as { icon: string; label: string; value: string }[];
+
+  const hasPhysical = equine.weightKg || equine.heightCm || equine.bcs;
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      {/* Nutrition card — full width */}
-      <div style={s.card}>
-        <SectionLabel label="Nutrição" />
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 24px' }}>
-          {items.map(({ icon, label, value }) => (
-            <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: `1px solid ${C.border}` }}>
-              <span style={{ color: C.green, flexShrink: 0 }}><Svg d={icon} size={14} /></span>
-              <div>
-                <p style={{ fontSize: 11, color: C.muted, fontWeight: 600 }}>{label}</p>
-                <p style={{ fontSize: 13, color: C.fg, fontWeight: 500, marginTop: 1 }}>{value}</p>
+      {items.length > 0 && (
+        <div style={s.card}>
+          <SectionLabel label="Nutrição" />
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 24px' }}>
+            {items.map(({ icon, label: lbl, value }) => (
+              <div key={lbl} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: `1px solid ${C.border}` }}>
+                <span style={{ color: C.green, flexShrink: 0 }}><Svg d={icon} size={14} /></span>
+                <div>
+                  <p style={{ fontSize: 11, color: C.muted, fontWeight: 600 }}>{lbl}</p>
+                  <p style={{ fontSize: 13, color: C.fg, fontWeight: 500, marginTop: 1 }}>{value}</p>
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
-      </div>
-      {/* Genealogy tree — full width below */}
-      <GenealogyTree />
+      )}
+      {hasPhysical && (
+        <div style={s.card}>
+          <SectionLabel label="Dados Físicos" />
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 24px' }}>
+            {equine.weightKg && <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: `1px solid ${C.border}` }}><span style={{ fontSize: 11, color: C.muted, fontWeight: 600 }}>Peso</span><span style={{ fontSize: 13, color: C.fg, fontWeight: 500 }}>{equine.weightKg} kg</span></div>}
+            {equine.heightCm && <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: `1px solid ${C.border}` }}><span style={{ fontSize: 11, color: C.muted, fontWeight: 600 }}>Altura</span><span style={{ fontSize: 13, color: C.fg, fontWeight: 500 }}>{equine.heightCm} cm ({(equine.heightCm / 10).toFixed(1)} palmos)</span></div>}
+            {equine.bcs && <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0' }}><span style={{ fontSize: 11, color: C.muted, fontWeight: 600 }}>Escore Corporal (BCS)</span><span style={{ fontSize: 13, color: C.fg, fontWeight: 500 }}>{equine.bcs}/9</span></div>}
+          </div>
+        </div>
+      )}
+      {items.length === 0 && !hasPhysical && (
+        <div style={{ ...s.card, textAlign: 'center', color: C.muted, fontSize: 13 }}>
+          <p>Nenhum dado de nutrição ou físico cadastrado.</p>
+          <a href={`/dashboard/plantel/editar/${equine.id}`} style={{ color: C.green, fontWeight: 600, textDecoration: 'none', fontSize: 13 }}>Adicionar dados →</a>
+        </div>
+      )}
+      <GenealogyTree equine={equine} />
     </div>
   );
 }
@@ -313,13 +392,43 @@ function DocumentsTab() {
   );
 }
 
-export const EquineProfile = () => {
+export const EquineProfile = ({ equine }: { equine: EquineProfileData }) => {
   const [tab, setTab] = useState<Tab>('overview');
-  const tabs: { id: Tab; label: string; alert?: number }[] = [
+  const [showDelete, setShowDelete] = useState(false);
+  const [confirmText, setConfirmText] = useState('');
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const tabs: { id: Tab; label: string }[] = [
     { id: 'overview', label: 'Visão Geral' },
     { id: 'health', label: 'Saúde e Manejo' },
-    { id: 'documents', label: 'Documentos', alert: 2 },
+    { id: 'documents', label: 'Documentos' },
   ];
+
+  async function handleDelete() {
+    setDeleting(true);
+    setDeleteError(null);
+    const supabase = createClient();
+    const { error } = await supabase.from('equinos').delete().eq('id', equine.id);
+    if (error) {
+      setDeleteError('Erro ao excluir. Tente novamente.');
+      setDeleting(false);
+      return;
+    }
+    window.location.href = '/dashboard/plantel';
+  }
+
+  const initials = equine.name.split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase();
+  const displayName = equine.nickname || equine.name;
+  const breedLabel = label(BREED_LABEL, equine.breed);
+  const sexLabel = label(SEX_LABEL, equine.sex);
+  const coatLabel = label(COAT_LABEL, equine.coat);
+
+  const statusBadge = {
+    healthy: null,
+    attention: { bg: C.amberLight, color: C.amberText, dot: C.amber, text: 'ATENÇÃO' },
+    urgent: { bg: 'hsl(340 82% 52% / 0.1)', color: 'hsl(340 82% 32%)', dot: 'hsl(340 82% 52%)', text: 'URGENTE' },
+    critical: { bg: C.redLight, color: C.redText, dot: C.red, text: 'CRÍTICO' },
+  }[equine.healthStatus];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -336,44 +445,48 @@ export const EquineProfile = () => {
       `}</style>
 
       {/* Back button */}
-      <a href="/dashboard" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 13, fontWeight: 500, color: C.muted, textDecoration: 'none', width: 'fit-content' }}
+      <a href="/dashboard/plantel" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 13, fontWeight: 500, color: C.muted, textDecoration: 'none', width: 'fit-content' }}
         onMouseEnter={e => (e.currentTarget.style.color = C.green)} onMouseLeave={e => (e.currentTarget.style.color = C.muted)}>
-        <Svg d={ICONS.back} size={15} /> Voltar ao Dashboard
+        <Svg d={ICONS.back} size={15} /> Voltar ao Plantel
       </a>
 
       {/* Hero Card */}
       <div style={{ borderRadius: '1.25rem', border: `1px solid ${C.border}`, overflow: 'hidden', background: C.card }}>
-        {/* Banner */}
         <div style={{ height: '11rem', position: 'relative', background: 'linear-gradient(135deg, hsl(168 83% 14%) 0%, hsl(220 60% 22%) 50%, hsl(250 55% 28%) 100%)' }}>
           <div style={{ position: 'absolute', inset: 0, backgroundImage: 'radial-gradient(ellipse at 15% 60%, hsl(168 83% 35% / 0.35) 0%, transparent 55%), radial-gradient(ellipse at 85% 20%, hsl(220 70% 50% / 0.2) 0%, transparent 50%)' }} />
-          {/* Decorative grid lines */}
           <div style={{ position: 'absolute', inset: 0, opacity: 0.07, backgroundImage: 'linear-gradient(hsl(0 0% 100%) 1px, transparent 1px), linear-gradient(90deg, hsl(0 0% 100%) 1px, transparent 1px)', backgroundSize: '32px 32px' }} />
         </div>
 
-        {/* Profile area */}
         <div style={{ padding: '0 1.75rem 1.75rem' }}>
-          {/* Avatar */}
           <div style={{ width: '5.5rem', height: '5.5rem', borderRadius: '1.1rem', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.6rem', fontWeight: 900, color: '#fff', background: 'linear-gradient(135deg, hsl(168 83% 32%), hsl(168 83% 20%))', border: '4px solid hsl(var(--background))', boxShadow: '0 8px 24px hsl(168 83% 10% / 0.5)', marginTop: '-2.75rem', position: 'relative', zIndex: 10 }}>
-            TR
+            {initials}
           </div>
 
-          {/* Name row */}
           <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10, marginTop: '0.875rem' }}>
             <div>
-              <h1 style={{ fontSize: '1.75rem', fontWeight: 800, color: C.fg, letterSpacing: '-0.02em', lineHeight: 1.1 }}>Trovão</h1>
-              <p style={{ fontSize: 13, color: C.muted, marginTop: 3 }}>Quarto de Milha &middot; 7 anos &middot; Garanhão &middot; Tordilho</p>
+              <h1 style={{ fontSize: '1.75rem', fontWeight: 800, color: C.fg, letterSpacing: '-0.02em', lineHeight: 1.1 }}>{displayName}</h1>
+              <p style={{ fontSize: 13, color: C.muted, marginTop: 3 }}>{breedLabel} &middot; {equine.age} &middot; {sexLabel} &middot; {coatLabel}</p>
             </div>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, padding: '6px 12px', borderRadius: 999, background: C.amberLight, color: C.amberText, letterSpacing: '0.06em', border: `1px solid hsl(38 92% 50% / 0.25)` }}>
-              <Dot color={C.amber} /> VACINA VENCENDO
-            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              {statusBadge && (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, padding: '6px 12px', borderRadius: 999, background: statusBadge.bg, color: statusBadge.color, letterSpacing: '0.06em', border: `1px solid ${statusBadge.dot}33` }}>
+                  <Dot color={statusBadge.dot} /> {statusBadge.text}
+                </span>
+              )}
+              <a href={`/dashboard/plantel/editar/${equine.id}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 600, padding: '7px 14px', borderRadius: '0.625rem', background: C.green, color: '#fff', textDecoration: 'none' }}>
+                <Svg d='<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>' size={13} /> Editar
+              </a>
+              <button onClick={() => setShowDelete(true)} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 600, padding: '7px 14px', borderRadius: '0.625rem', background: 'transparent', color: C.red, border: `1px solid ${C.red}55`, cursor: 'pointer' }}>
+                <Svg d='<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>' size={13} /> Excluir
+              </button>
+            </div>
           </div>
 
-          {/* Quick Stats — 2x2 mobile, 4-col desktop */}
           <div className="eq-stats-grid">
-            <StatCard icon={ICONS.cal} label="Idade" value="7 anos" />
-            <StatCard icon={ICONS.sex} label="Sexo" value="Garanhão" />
-            <StatCard icon={ICONS.palette} label="Pelagem" value="Tordilho" />
-            <StatCard icon={ICONS.tag} label="Registro" value="ABQM" />
+            <StatCard icon={ICONS.cal} label="Idade" value={equine.age} />
+            <StatCard icon={ICONS.sex} label="Sexo" value={sexLabel} />
+            <StatCard icon={ICONS.palette} label="Pelagem" value={coatLabel} />
+            <StatCard icon={ICONS.tag} label="Registro" value={equine.registration || '—'} />
           </div>
         </div>
       </div>
@@ -386,15 +499,53 @@ export const EquineProfile = () => {
             return (
               <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: '7px 16px', borderRadius: '0.625rem', fontSize: 13, fontWeight: 600, border: 'none', cursor: 'pointer', transition: 'all 0.18s', whiteSpace: 'nowrap', background: active ? C.card : 'transparent', color: active ? C.fg : C.muted, boxShadow: active ? '0 1px 4px hsl(0 0% 0% / 0.1)' : 'none' }}>
                 {t.label}
-                {t.alert && <span style={{ marginLeft: 6, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16, borderRadius: '50%', background: C.red, color: '#fff', fontSize: 9, fontWeight: 800 }}>{t.alert}</span>}
               </button>
             );
           })}
         </div>
-        {tab === 'overview' && <NutritionTab />}
+        {tab === 'overview' && <NutritionTab equine={equine} />}
         {tab === 'health' && <HealthTab />}
         {tab === 'documents' && <DocumentsTab />}
       </div>
+
+      {/* Modal de exclusão */}
+      {showDelete && (
+        <div style={{ position: 'fixed', inset: 0, background: 'hsl(0 0% 0% / 0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 16 }}
+          onClick={() => !deleting && setShowDelete(false)}>
+          <div onClick={e => e.stopPropagation()} style={{ background: C.card, borderRadius: '1rem', border: `1px solid ${C.border}`, padding: '1.75rem', maxWidth: 420, width: '100%', boxShadow: '0 12px 48px hsl(0 0% 0% / 0.3)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+              <div style={{ width: 40, height: 40, borderRadius: '50%', background: C.redLight, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: C.red }}>
+                <Svg d='<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>' size={18} />
+              </div>
+              <h2 style={{ fontSize: '1.1rem', fontWeight: 800, color: C.fg }}>Excluir equino</h2>
+            </div>
+            <p style={{ fontSize: 13, color: C.muted, lineHeight: 1.6, marginBottom: 14 }}>
+              Esta ação não pode ser desfeita. Para confirmar, digite <strong style={{ color: C.fg }}>{equine.name}</strong> abaixo.
+            </p>
+            <input
+              type="text"
+              value={confirmText}
+              onChange={e => setConfirmText(e.target.value)}
+              placeholder={equine.name}
+              autoFocus
+              style={{ width: '100%', padding: '0.625rem 0.875rem', borderRadius: '0.625rem', border: `1px solid ${C.border}`, background: C.bg, color: C.fg, fontSize: 14, outline: 'none', boxSizing: 'border-box', marginBottom: deleteError ? 8 : 16 }}
+            />
+            {deleteError && <p style={{ fontSize: 12, color: C.red, marginBottom: 12 }}>{deleteError}</p>}
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button onClick={() => setShowDelete(false)} disabled={deleting} style={{ padding: '0.5625rem 1.125rem', borderRadius: '0.625rem', background: 'hsl(var(--muted))', color: C.fg, fontWeight: 600, fontSize: 13, border: 'none', cursor: deleting ? 'not-allowed' : 'pointer' }}>
+                Cancelar
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={confirmText !== equine.name || deleting}
+                style={{ padding: '0.5625rem 1.125rem', borderRadius: '0.625rem', background: confirmText === equine.name && !deleting ? C.red : 'hsl(0 84.2% 55% / 0.4)', color: '#fff', fontWeight: 600, fontSize: 13, border: 'none', cursor: confirmText === equine.name && !deleting ? 'pointer' : 'not-allowed' }}
+              >
+                {deleting ? 'Excluindo…' : 'Excluir definitivamente'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

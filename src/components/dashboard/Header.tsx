@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { createClient } from '../../lib/supabase';
 
 // ─── Icons ───────────────────────────────────────────────────────────────────
 
@@ -140,17 +141,41 @@ function ThemeToggle({ isDark, onToggle }: { isDark: boolean; onToggle: () => vo
   );
 }
 
+// ─── Logout Button ────────────────────────────────────────────────────────────
+
+function LogoutButton() {
+  async function handleLogout() {
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    window.location.href = '/login';
+  }
+
+  return (
+    <button
+      onClick={handleLogout}
+      aria-label="Sair"
+      title="Sair"
+      className="w-9 h-9 flex items-center justify-center rounded-lg transition-all duration-200 text-[hsl(240_3.8%_46.1%)] hover:text-red-500 hover:bg-red-500/10 cursor-pointer"
+    >
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/>
+      </svg>
+    </button>
+  );
+}
+
 // ─── Avatar ───────────────────────────────────────────────────────────────────
 
 function Avatar() {
   return (
-    <button
+    <a
+      href="/dashboard/perfil"
       aria-label="Perfil do usuário"
       className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white cursor-pointer transition-all duration-200 hover:ring-2 hover:ring-offset-2 hover:ring-[hsl(168_83%_29%)] dark:hover:ring-offset-[hsl(240_10%_3.9%)]"
       style={{ background: 'linear-gradient(135deg, hsl(168 83% 29%), hsl(168 83% 20%))' }}
     >
       SS
-    </button>
+    </a>
   );
 }
 
@@ -181,8 +206,6 @@ const NAV_LINKS = [
 // ─── Main Header Component ────────────────────────────────────────────────────
 
 export default function Header({ currentPath }: { currentPath?: string }) {
-  // Lock secondary nav items when viewing a horse's detail page
-  const isDetailsPage = !!(currentPath?.includes('/equino'));
   const [isDark, setIsDark] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
@@ -237,7 +260,6 @@ export default function Header({ currentPath }: { currentPath?: string }) {
                 key={link.href}
                 href={link.href}
                 label={link.label}
-                disabled={isDetailsPage && !link.alwaysEnabled}
               />
             ))}
           </nav>
@@ -248,6 +270,7 @@ export default function Header({ currentPath }: { currentPath?: string }) {
             <ThemeToggle isDark={isDark} onToggle={toggleTheme} />
             <div className="w-px h-5 bg-[hsl(var(--border))] mx-2" />
             <Avatar />
+            <LogoutButton />
           </div>
 
           {/* ── Mobile Right Actions ── */}
@@ -276,13 +299,12 @@ export default function Header({ currentPath }: { currentPath?: string }) {
                 key={link.href}
                 href={link.href}
                 label={link.label}
-                disabled={isDetailsPage && !link.alwaysEnabled}
                 onClick={() => setMobileMenuOpen(false)}
               />
             ))}
             <div className="mt-3 pt-3 border-t border-[hsl(var(--border))] flex items-center gap-3">
               <Avatar />
-              <div>
+              <div style={{ flex: 1 }}>
                 <p className="text-sm font-medium" style={{ color: 'hsl(var(--foreground))' }}>
                   Sabrina Santos
                 </p>
@@ -290,6 +312,7 @@ export default function Header({ currentPath }: { currentPath?: string }) {
                   Administradora
                 </p>
               </div>
+              <LogoutButton />
             </div>
           </nav>
         </div>

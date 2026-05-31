@@ -1,0 +1,31 @@
+---
+import '../styles/global.css';
+
+interface Props {
+  title?: string;
+}
+const { title = 'EquiCore' } = Astro.props;
+---
+
+<!doctype html>
+<html lang="pt-BR" class="h-full">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>{title}</title>
+    <script is:inline>
+      (function () {
+        try {
+          const s = localStorage.getItem('equicore-theme');
+          const d = window.matchMedia('(prefers-color-scheme: dark)').matches;
+          if (s === 'dark' || (!s && d)) document.documentElement.classList.add('dark');
+        } catch (_) {}
+      })();
+    </script>
+  </head>
+  <body class="min-h-screen antialiased flex items-center justify-center p-4"
+        style="background: hsl(var(--background)); color: hsl(var(--foreground));">
+    <slot />
+  </body>
+</html>

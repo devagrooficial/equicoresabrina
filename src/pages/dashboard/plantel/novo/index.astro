@@ -1,0 +1,13 @@
+---
+export const prerender = false;
+import Layout from '../../../../layouts/Layout.astro';
+import Header from '../../../../components/dashboard/Header';
+import EquineFormStepper from '../../../../components/plantel/EquineFormStepper';
+---
+
+<Layout title="Novo Equino — EquiCore">
+  <Header client:load currentPath={Astro.url.pathname} />
+  <main class="w-full max-w-3xl mx-auto px-4 md:px-8 py-8">
+    <EquineFormStepper client:load />
+  </main>
+</Layout>

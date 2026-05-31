@@ -1,0 +1,9 @@
+---
+export const prerender = false;
+import AuthLayout from '../layouts/AuthLayout.astro';
+import RegisterForm from '../components/auth/RegisterForm';
+---
+
+<AuthLayout title="Criar conta — EquiCore">
+  <RegisterForm client:load />
+</AuthLayout>

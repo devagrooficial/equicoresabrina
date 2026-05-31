@@ -238,7 +238,7 @@ export const CriticalAlerts = () => {
         style={{ borderColor: 'hsl(var(--border))' }}
       >
         <a
-          href="#"
+          href="/dashboard/alertas"
           className="flex items-center justify-center gap-1.5 w-full text-xs font-medium py-2 rounded-lg transition-all duration-200 hover:bg-[hsl(var(--muted))]"
           style={{ color: 'hsl(var(--muted-foreground))' }}
         >
