@@ -50,7 +50,8 @@ function CloseIcon() {
 
 // ─── Logo Component ───────────────────────────────────────────────────────────
 
-function Logo({ isDark }: { isDark: boolean }) {
+function Logo() {
+  // Troca via CSS (classe `dark` no <html>), evitando flash/dependência de JS
   return (
     <a href="/dashboard" style={{ display: 'flex', alignItems: 'center', flexShrink: 0, textDecoration: 'none' }} aria-label="Equicore Home">
       <div style={{ display: 'flex', alignItems: 'center' }}>
@@ -58,13 +59,15 @@ function Logo({ isDark }: { isDark: boolean }) {
         <img
           src="/images/logodark.png"
           alt="Equicore"
-          style={{ height: 32, width: 'auto', objectFit: 'contain', display: isDark ? 'none' : 'block' }}
+          className="block dark:hidden"
+          style={{ height: 32, width: 'auto', objectFit: 'contain' }}
         />
         {/* logowhite.png: logo branca, aparece no Dark */}
         <img
           src="/images/logowhite.png"
           alt="Equicore"
-          style={{ height: 32, width: 'auto', objectFit: 'contain', display: isDark ? 'block' : 'none' }}
+          className="hidden dark:block"
+          style={{ height: 32, width: 'auto', objectFit: 'contain' }}
         />
       </div>
     </a>
@@ -208,11 +211,9 @@ const NAV_LINKS = [
 export default function Header({ currentPath }: { currentPath?: string }) {
   const [isDark, setIsDark] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    setMounted(true);
-    // Read current theme from document (set by the inline script in Layout.astro)
+    // Lê o tema atual do documento (definido pelo script inline no Layout.astro)
     setIsDark(document.documentElement.classList.contains('dark'));
   }, []);
 
@@ -228,20 +229,6 @@ export default function Header({ currentPath }: { currentPath?: string }) {
     }
   }
 
-  // Prevent layout shift before mount — show dark logo based on stored preference
-  if (!mounted) {
-    const prefersDark = typeof window !== 'undefined'
-      ? document.documentElement.classList.contains('dark')
-      : false;
-    return (
-      <header className="sticky top-0 z-50 w-full border-b border-[hsl(var(--border))] bg-[hsl(var(--background)/0.85)] backdrop-blur-md">
-        <div className="flex h-14 items-center px-4 lg:px-6">
-          <Logo isDark={prefersDark} />
-        </div>
-      </header>
-    );
-  }
-
   return (
     <>
       <header
@@ -251,7 +238,7 @@ export default function Header({ currentPath }: { currentPath?: string }) {
         <div className="flex h-14 items-center px-4 lg:px-6">
 
           {/* ── Logo ── */}
-          <Logo isDark={isDark} />
+          <Logo />
 
           {/* ── Desktop Nav (center) ── */}
           <nav className="hidden md:flex flex-1 justify-center gap-1">

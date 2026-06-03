@@ -14,6 +14,8 @@ export interface Equine {
   name: string;
   breed: string;
   age: number;
+  /** Texto pronto de idade (ex.: "7 anos"). Tem prioridade sobre `age`. */
+  ageText?: string;
   status: EquineStatus;
   photoUrl?: string;
   /** Initials shown when photoUrl is absent */
@@ -136,7 +138,7 @@ export const EquineCard = ({ equine }: { equine: Equine }) => {
 
   return (
     <a
-      href={`/dashboard/equino`}
+      href={`/dashboard/equino/${equine.id}`}
       className="group flex items-center gap-4 px-4 py-3.5 rounded-xl border transition-all duration-200 cursor-pointer hover:shadow-md hover:-translate-y-px no-underline"
       style={{
         background: 'hsl(var(--card))',
@@ -178,8 +180,7 @@ export const EquineCard = ({ equine }: { equine: Equine }) => {
           className="text-xs mt-0.5 truncate"
           style={{ color: 'hsl(var(--muted-foreground))' }}
         >
-          {equine.breed} · {equine.age}{' '}
-          {equine.age === 1 ? 'ano' : 'anos'}
+          {equine.breed} · {equine.ageText ?? `${equine.age} ${equine.age === 1 ? 'ano' : 'anos'}`}
         </p>
       </div>
 

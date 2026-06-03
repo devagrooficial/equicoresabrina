@@ -30,6 +30,27 @@ function calcAge(birthDate: string | null, estimatedAge: number | null): string 
   return '—';
 }
 
+// Alertas de saúde/documentação gerados para este equino
+const { data: alertRows } = await supabase
+  .from('equine_alerts')
+  .select('id, due_date, last_done_at, resolved_at, status_override, attachment_url, attachment_name, template:alert_templates(name, category, description, periodicity_months)')
+  .eq('equine_id', id)
+  .order('created_at', { ascending: true });
+
+const alerts = (alertRows ?? []).map((a: any) => ({
+  id: a.id,
+  name: a.template?.name ?? 'Item',
+  category: a.template?.category ?? 'Procedimento',
+  description: a.template?.description ?? null,
+  dueDate: a.due_date,
+  lastDoneAt: a.last_done_at,
+  notOwned: a.status_override === 'NAO_POSSUI',
+  periodicityMonths: a.template?.periodicity_months ?? null,
+  resolvedAt: a.resolved_at,
+  attachmentUrl: a.attachment_url ?? null,
+  attachmentName: a.attachment_name ?? null,
+}));
+
 const reg = [row.reg_abqm, row.reg_abccm, row.reg_abpsi, row.reg_abccc, row.reg_other].find(Boolean) ?? '';
 
 const equineData = {
@@ -65,6 +86,6 @@ const equineData = {
 <Layout title={`${row.name} — EquiCore`}>
   <Header client:load currentPath={Astro.url.pathname} />
   <main class="w-full max-w-5xl mx-auto px-4 md:px-8 py-8">
-    <EquineProfile client:load equine={equineData} />
+    <EquineProfile client:load equine={equineData} alerts={alerts} />
   </main>
 </Layout>

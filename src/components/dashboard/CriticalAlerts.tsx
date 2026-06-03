@@ -3,39 +3,14 @@
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface Alert {
+export interface Alert {
   id: string;
   type: 'vaccine' | 'exam' | 'urgent';
   horse: string;
   description: string;
-  daysLeft: number;
+  daysLeft: number | null; // negativo = vencida; null = sem data (pendente)
+  equineId?: string;
 }
-
-// ─── Mock Data ────────────────────────────────────────────────────────────────
-
-const ALERTS: Alert[] = [
-  {
-    id: '1',
-    type: 'vaccine',
-    horse: 'Trovão',
-    description: 'Raiva',
-    daysLeft: 15,
-  },
-  {
-    id: '2',
-    type: 'vaccine',
-    horse: 'Serena',
-    description: 'Influenza',
-    daysLeft: 6,
-  },
-  {
-    id: '3',
-    type: 'exam',
-    horse: 'Duque',
-    description: 'Exame de Mormo',
-    daysLeft: 3,
-  },
-];
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
 
@@ -98,18 +73,29 @@ function ChevronRightIcon() {
 
 // ─── Urgency config ───────────────────────────────────────────────────────────
 
-function getUrgencyConfig(daysLeft: number) {
-  if (daysLeft <= 5) {
+function getUrgencyConfig(daysLeft: number | null) {
+  // Vencida ou crítica (<= 3 dias)
+  if (daysLeft !== null && daysLeft <= 3) {
     return {
       bg: 'hsl(0 84.2% 60.2% / 0.08)',
       border: 'hsl(0 84.2% 60.2% / 0.25)',
       iconColor: 'hsl(0 84.2% 60.2%)',
       badgeBg: 'hsl(0 84.2% 60.2% / 0.12)',
       badgeText: 'hsl(0 84.2% 40%)',
+      label: daysLeft < 0 ? 'VENCIDA' : 'CRÍTICO',
+    };
+  }
+  if (daysLeft !== null && daysLeft <= 7) {
+    return {
+      bg: 'hsl(340 82% 52% / 0.08)',
+      border: 'hsl(340 82% 52% / 0.25)',
+      iconColor: 'hsl(340 82% 52%)',
+      badgeBg: 'hsl(340 82% 52% / 0.12)',
+      badgeText: 'hsl(340 82% 32%)',
       label: 'URGENTE',
     };
   }
-  if (daysLeft <= 10) {
+  if (daysLeft !== null && daysLeft <= 15) {
     return {
       bg: 'hsl(38 92% 50% / 0.08)',
       border: 'hsl(38 92% 50% / 0.25)',
@@ -135,11 +121,13 @@ function AlertItem({ alert }: { alert: Alert }) {
   const cfg = getUrgencyConfig(alert.daysLeft);
 
   return (
-    <div
-      className="group flex items-start gap-3 p-3 rounded-xl border transition-all duration-200 cursor-pointer hover:scale-[1.01]"
+    <a
+      href={alert.equineId ? `/dashboard/equino/${alert.equineId}` : '/dashboard/alertas'}
+      className="group flex items-start gap-3 p-3 rounded-xl border transition-all duration-200 cursor-pointer hover:scale-[1.01] no-underline"
       style={{
         background: cfg.bg,
         borderColor: cfg.border,
+        textDecoration: 'none',
       }}
     >
       {/* Icon */}
@@ -168,10 +156,13 @@ function AlertItem({ alert }: { alert: Alert }) {
           className="text-xs mt-0.5"
           style={{ color: 'hsl(var(--muted-foreground))' }}
         >
-          Vence em{' '}
-          <span className="font-semibold" style={{ color: cfg.iconColor }}>
-            {alert.daysLeft} dias
-          </span>
+          {alert.daysLeft === null ? (
+            <span className="font-semibold" style={{ color: cfg.iconColor }}>Aguardando data</span>
+          ) : alert.daysLeft < 0 ? (
+            <>Vencida há{' '}<span className="font-semibold" style={{ color: cfg.iconColor }}>{Math.abs(alert.daysLeft)} dia{Math.abs(alert.daysLeft) !== 1 ? 's' : ''}</span></>
+          ) : (
+            <>Vence em{' '}<span className="font-semibold" style={{ color: cfg.iconColor }}>{alert.daysLeft} dia{alert.daysLeft !== 1 ? 's' : ''}</span></>
+          )}
         </p>
       </div>
 
@@ -182,13 +173,14 @@ function AlertItem({ alert }: { alert: Alert }) {
       >
         {cfg.label}
       </span>
-    </div>
+    </a>
   );
 }
 
 // ─── Main Export ──────────────────────────────────────────────────────────────
 
-export const CriticalAlerts = () => {
+export const CriticalAlerts = ({ alerts = [], total }: { alerts?: Alert[]; total?: number }) => {
+  const count = total ?? alerts.length;
   return (
     <div
       className="rounded-2xl border h-full flex flex-col"
@@ -221,15 +213,23 @@ export const CriticalAlerts = () => {
             color: 'hsl(0 84.2% 50%)',
           }}
         >
-          {ALERTS.length}
+          {count}
         </span>
       </div>
 
       {/* Alerts list */}
       <div className="flex-1 flex flex-col gap-2 p-4 overflow-y-auto">
-        {ALERTS.map((alert) => (
-          <AlertItem key={alert.id} alert={alert} />
-        ))}
+        {alerts.length === 0 ? (
+          <div className="flex flex-col items-center justify-center text-center py-8 gap-1">
+            <span style={{ fontSize: '1.5rem' }}>✅</span>
+            <p className="text-sm font-semibold" style={{ color: 'hsl(var(--foreground))' }}>Nenhum alerta crítico</p>
+            <p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>Tudo em ordem por aqui</p>
+          </div>
+        ) : (
+          alerts.map((alert) => (
+            <AlertItem key={alert.id} alert={alert} />
+          ))
+        )}
       </div>
 
       {/* Footer CTA */}

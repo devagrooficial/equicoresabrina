@@ -1,0 +1,49 @@
+---
+export const prerender = false;
+import Layout from '../../../../layouts/Layout.astro';
+import Header from '../../../../components/dashboard/Header';
+import HealthSetupForm from '../../../../components/plantel/HealthSetupForm';
+import { createServerSupabaseClient } from '../../../../lib/supabase';
+
+const { id } = Astro.params;
+const responseHeaders = new Headers();
+const supabase = createServerSupabaseClient(Astro.request, responseHeaders);
+
+// Equino (valida acesso via RLS) + alertas gerados pelo trigger
+const { data: equine, error: eqError } = await supabase
+  .from('equinos')
+  .select('id, name, nickname')
+  .eq('id', id)
+  .single();
+
+if (eqError || !equine) {
+  return Astro.redirect('/dashboard/plantel');
+}
+
+const { data: alerts } = await supabase
+  .from('equine_alerts')
+  .select('id, last_done_at, status_override, resolved_at, attachment_url, attachment_name, template:alert_templates(name, category, description, periodicity_months)')
+  .eq('equine_id', id)
+  .order('created_at', { ascending: true });
+
+// Achata o join para o formato esperado pelo componente
+const alertItems = (alerts ?? []).map((a: any) => ({
+  id: a.id,
+  name: a.template?.name ?? 'Item',
+  category: a.template?.category ?? 'Procedimento',
+  description: a.template?.description ?? null,
+  periodicity_months: a.template?.periodicity_months ?? null,
+  attachment_url: a.attachment_url ?? null,
+  attachment_name: a.attachment_name ?? null,
+  last_done_at: a.last_done_at ?? null,
+  status_override: a.status_override ?? null,
+  resolved_at: a.resolved_at ?? null,
+}));
+---
+
+<Layout title={`Saúde — ${equine.name} — EquiCore`}>
+  <Header client:load currentPath={Astro.url.pathname} />
+  <main class="w-full max-w-3xl mx-auto px-4 md:px-8 py-8">
+    <HealthSetupForm client:load equineId={equine.id} equineName={equine.nickname || equine.name} alerts={alertItems} />
+  </main>
+</Layout>

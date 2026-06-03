@@ -1,6 +1,70 @@
 import { useState } from 'react';
 import { createClient } from '../../lib/supabase';
+import { calculateAlertStatus, type AlertStatusKey } from '../../lib/alertStatus';
 type Tab = 'overview' | 'health' | 'documents';
+
+export interface EquineAlert {
+  id: string;
+  name: string;
+  category: string;          // Vacina | Documento | Procedimento
+  description: string | null;
+  dueDate: string | null;
+  lastDoneAt: string | null;
+  notOwned: boolean;
+  periodicityMonths: number | null;  // null = documento permanente
+  resolvedAt: string | null;
+  attachmentUrl: string | null;
+  attachmentName: string | null;
+}
+
+function isImageFile(name: string | null, url: string | null): boolean {
+  const target = (name || url || '').toLowerCase().split('?')[0];
+  return /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/.test(target);
+}
+
+function AttachmentLink({ alert }: { alert: EquineAlert }) {
+  if (!alert.attachmentUrl) return null;
+  const isImage = isImageFile(alert.attachmentName, alert.attachmentUrl);
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      <a href={alert.attachmentUrl} target="_blank" rel="noopener"
+        style={{ display: 'inline-flex', alignItems: 'flex-start', gap: 8, textDecoration: 'none' }}>
+        {isImage ? (
+          <img
+            src={alert.attachmentUrl}
+            alt={alert.attachmentName || 'Documento'}
+            style={{ width: 56, height: 56, objectFit: 'cover', borderRadius: 8, border: `1px solid ${C.border}`, flexShrink: 0 }}
+          />
+        ) : (
+          <span style={{ width: 56, height: 56, borderRadius: 8, border: `1px solid ${C.border}`, background: C.redLight, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.red, flexShrink: 0 }}>
+            <Svg d='<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M9 13h6"/><path d="M9 17h6"/>' size={20} />
+          </span>
+        )}
+        <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <span style={{ fontSize: 11, fontWeight: 600, color: C.green }}>{isImage ? 'Ver imagem' : 'Ver PDF'}</span>
+          <span style={{ fontSize: 10, color: C.muted, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{alert.attachmentName || 'Documento'}</span>
+        </span>
+      </a>
+    </div>
+  );
+}
+
+function isPermanent(a: EquineAlert) {
+  return a.periodicityMonths == null;
+}
+
+function fmtDate(iso: string | null): string {
+  if (!iso) return '—';
+  return iso.split('-').reverse().join('/');
+}
+
+// Mapeia o status calculado para o Badge visual (valid | warning | urgent)
+function alertBadgeStatus(key: AlertStatusKey): 'valid' | 'warning' | 'urgent' {
+  if (key === 'VENCIDA' || key === 'CRITICO') return 'urgent';
+  if (key === 'URGENTE' || key === 'ATENCAO') return 'warning';
+  return 'valid';
+}
 
 export interface EquineProfileData {
   id: string;
@@ -101,17 +165,33 @@ function Dot({ color }: { color: string }) {
   return <span style={{ width: 7, height: 7, borderRadius: '50%', background: color, display: 'inline-block', flexShrink: 0 }} />;
 }
 
-function Badge({ status }: { status: 'valid' | 'warning' | 'urgent' }) {
+function Badge({ status, customLabel }: { status: 'valid' | 'warning' | 'urgent' | 'pending' | 'muted'; customLabel?: string }) {
   const cfg = {
     valid: { bg: 'hsl(142 71% 45% / 0.12)', text: 'hsl(142 71% 26%)', dot: 'hsl(142 71% 40%)', label: 'VÁLIDO' },
     warning: { bg: C.amberLight, text: C.amberText, dot: C.amber, label: 'VENCENDO' },
     urgent: { bg: C.redLight, text: C.redText, dot: C.red, label: 'URGENTE' },
+    pending: { bg: 'hsl(217 91% 60% / 0.1)', text: 'hsl(217 91% 32%)', dot: 'hsl(217 91% 55%)', label: 'PENDENTE' },
+    muted: { bg: 'hsl(var(--muted))', text: C.muted, dot: C.muted, label: '—' },
   }[status];
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 999, background: cfg.bg, color: cfg.text, letterSpacing: '0.06em', whiteSpace: 'nowrap' }}>
-      <Dot color={cfg.dot} />{cfg.label}
+      <Dot color={cfg.dot} />{customLabel ?? cfg.label}
     </span>
   );
+}
+
+// Badge a partir de um alerta real (calcula o status pela data)
+function AlertStatusBadge({ alert }: { alert: EquineAlert }) {
+  if (alert.notOwned) return <Badge status="muted" customLabel="NÃO POSSUI" />;
+  // Documento permanente (ex.: Resenha): possui (resolvido) ou pendente
+  if (isPermanent(alert)) {
+    return alert.resolvedAt
+      ? <Badge status="valid" customLabel="POSSUI" />
+      : <Badge status="pending" customLabel="PENDENTE" />;
+  }
+  const st = calculateAlertStatus(alert.dueDate);
+  if (st.key === 'PENDENTE' && alert.dueDate === null) return <Badge status="pending" customLabel="PENDENTE" />;
+  return <Badge status={alertBadgeStatus(st.key)} customLabel={st.label.toUpperCase()} />;
 }
 
 function SectionLabel({ label }: { label: string }) {
@@ -311,88 +391,123 @@ function NutritionTab({ equine }: { equine: EquineProfileData }) {
 }
 
 
-function HealthTab() {
-  const vaccines = [
-    { name: 'Influenza Equina', date: '12/01/2026', status: 'warning' as const, days: '6 dias' },
-    { name: 'Raiva', date: '08/02/2026', status: 'warning' as const, days: '15 dias' },
-    { name: 'Tétano', date: '10/10/2025', status: 'valid' as const },
-    { name: 'Encefalomielite', date: '05/08/2025', status: 'valid' as const },
-  ];
-  const manejo = [
-    { label: 'Último casqueamento', value: '10/03/2026' },
-    { label: 'Próximo casqueamento', value: '10/06/2026' },
-    { label: 'Ferragem', value: 'Aço — 4 patas' },
-    { label: 'Dentição', value: 'Revisão 15/05/2026', warn: true },
-    { label: 'Vermifugação', value: 'Ivermectina — Jan/2026' },
-  ];
+function alertDueText(alert: EquineAlert): string {
+  if (alert.notOwned) return 'Não possui';
+  if (isPermanent(alert)) return alert.resolvedAt ? 'Documento permanente · registrado' : 'Documento permanente · aguardando confirmação';
+  if (!alert.dueDate) return 'Aguardando data';
+  const st = calculateAlertStatus(alert.dueDate);
+  const d = st.daysRemaining ?? 0;
+  const base = `Vence ${fmtDate(alert.dueDate)}`;
+  if (d < 0) return `${base} · vencida há ${Math.abs(d)} dia${Math.abs(d) !== 1 ? 's' : ''}`;
+  return `${base} · em ${d} dia${d !== 1 ? 's' : ''}`;
+}
+
+function EditHealthButton({ equineId, label = 'Editar saúde e documentos' }: { equineId: string; label?: string }) {
   return (
-    <div className="eq-health-grid">
-      <div style={s.card}>
-        <SectionLabel label="Histórico de Vacinas" />
-        {vaccines.map(v => (
-          <div key={v.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0', borderBottom: `1px solid ${C.border}` }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ color: v.status === 'valid' ? C.green : C.amber }}><Svg d={ICONS.syringe} size={13} /></span>
-              <div>
-                <p style={{ fontSize: 13, fontWeight: 600, color: C.fg }}>{v.name}</p>
-                <p style={{ fontSize: 11, color: C.muted, marginTop: 1 }}>Aplicada {v.date}{v.days ? ` · vence em ${v.days}` : ''}</p>
-              </div>
-            </div>
-            <Badge status={v.status} />
+    <a href={`/dashboard/equino/${equineId}/setup-saude`}
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 13, fontWeight: 700, padding: '10px 18px', borderRadius: '0.625rem', background: C.green, color: '#fff', textDecoration: 'none', alignSelf: 'flex-start', boxShadow: '0 2px 8px hsl(168 83% 29% / 0.25)' }}>
+      <Svg d='<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>' size={15} />
+      {label}
+    </a>
+  );
+}
+
+function HealthTab({ alerts, equineId }: { alerts: EquineAlert[]; equineId: string }) {
+  const vaccines = alerts.filter(a => a.category === 'Vacina');
+  const procedures = alerts.filter(a => a.category === 'Procedimento');
+
+  function row(a: EquineAlert) {
+    const isOk = !a.notOwned && a.dueDate && calculateAlertStatus(a.dueDate).key === 'PENDENTE';
+    return (
+      <div key={a.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0', borderBottom: `1px solid ${C.border}`, gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+          <span style={{ color: isOk ? C.green : a.notOwned ? C.muted : C.amber, flexShrink: 0 }}><Svg d={ICONS.syringe} size={13} /></span>
+          <div style={{ minWidth: 0 }}>
+            <p style={{ fontSize: 13, fontWeight: 600, color: C.fg }}>{a.name}</p>
+            <p style={{ fontSize: 11, color: C.muted, marginTop: 1 }}>
+              {a.lastDoneAt ? `Última: ${fmtDate(a.lastDoneAt)} · ` : ''}{alertDueText(a)}
+            </p>
+            <AttachmentLink alert={a} />
           </div>
-        ))}
+        </div>
+        <AlertStatusBadge alert={a} />
       </div>
-      <div style={s.card}>
-        <SectionLabel label="Casqueamento e Manejo" />
-        {manejo.map(m => (
-          <div key={m.label} style={{ ...s.row, gap: 8 }}>
-            <span style={{ fontSize: 11, color: C.muted, fontWeight: 600 }}>{m.label}</span>
-            <span style={{ fontSize: 13, fontWeight: 500, color: m.warn ? C.amberText : C.fg }}>{m.value}</span>
-          </div>
-        ))}
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <EditHealthButton equineId={equineId} label="Editar vacinas e procedimentos" />
+      <div className="eq-health-grid">
+        <div style={s.card}>
+          <SectionLabel label="Vacinas" />
+          {vaccines.length === 0
+            ? <p style={{ fontSize: 13, color: C.muted, fontStyle: 'italic' }}>Nenhuma vacina cadastrada.</p>
+            : vaccines.map(row)}
+        </div>
+        <div style={s.card}>
+          <SectionLabel label="Procedimentos e Manejo" />
+          {procedures.length === 0
+            ? <p style={{ fontSize: 13, color: C.muted, fontStyle: 'italic' }}>Nenhum procedimento cadastrado.</p>
+            : procedures.map(row)}
+        </div>
       </div>
     </div>
   );
 }
 
-function DocumentsTab() {
+function DocumentsTab({ alerts, equineId }: { alerts: EquineAlert[]; equineId: string }) {
+  const docs = alerts.filter(a => a.category === 'Documento');
+  // Algum documento vencendo/vencido?
+  const hasExpiring = docs.some(d => !d.notOwned && d.dueDate && ['VENCIDA', 'CRITICO', 'URGENTE', 'ATENCAO'].includes(calculateAlertStatus(d.dueDate).key));
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div style={{ display: 'flex', gap: 10, padding: '12px 14px', borderRadius: '0.75rem', border: `1px solid hsl(0 84.2% 55% / 0.25)`, background: C.redLight }}>
-        <span style={{ color: C.red, marginTop: 1 }}><Svg d={ICONS.warn} size={14} /></span>
-        <div>
-          <p style={{ fontSize: 13, fontWeight: 700, color: C.redText }}>Exames Obrigatórios com vencimento próximo</p>
-          <p style={{ fontSize: 11, color: C.red, marginTop: 2 }}>Mormo e AIE têm validade de 60 dias. Renove antes do prazo para evitar impedimentos.</p>
-        </div>
-      </div>
-      {[
-        { name: 'Mormo (Mallein)', validity: '28/04/2026', status: 'urgent' as const, days: '3 dias', detail: 'Obrigatório para trânsito interestadual e eventos equestres', icon: ICONS.file },
-        { name: 'AIE — Anemia Infecciosa Equina', validity: '01/05/2026', status: 'warning' as const, days: '5 dias', detail: 'Coggins Test — Instituto Veterinário Central', icon: ICONS.file },
-        { name: 'GTA — Guia de Trânsito Animal', validity: '15/07/2026', status: 'valid' as const, detail: 'INDEA-MT — Válida para todo o território nacional', icon: ICONS.file },
-        { name: 'Registro de Propriedade', validity: 'Permanente', status: 'valid' as const, detail: 'ABQM 2019/00458 — Prop.: Sabrina Santos', icon: ICONS.file },
-      ].map(doc => (
-        <div key={doc.name} style={{ ...s.card, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12,
-          borderColor: doc.status === 'urgent' ? 'hsl(0 84.2% 55% / 0.3)' : doc.status === 'warning' ? 'hsl(38 92% 50% / 0.3)' : C.border,
-          background: doc.status === 'urgent' ? C.redLight : doc.status === 'warning' ? C.amberLight : C.card,
-        }}>
-          <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-            <span style={{ color: doc.status === 'urgent' ? C.red : doc.status === 'warning' ? C.amber : C.green, marginTop: 2 }}><Svg d={doc.icon} size={14} /></span>
-            <div>
-              <p style={{ fontSize: 13, fontWeight: 700, color: C.fg }}>{doc.name}</p>
-              <p style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{doc.detail}</p>
-              <p style={{ fontSize: 11, marginTop: 4, fontWeight: 600, color: doc.status === 'urgent' ? C.redText : doc.status === 'warning' ? C.amberText : C.muted }}>
-                Validade: {doc.validity}{doc.days ? ` · vence em ${doc.days}` : ''}
-              </p>
-            </div>
+      <EditHealthButton equineId={equineId} label="Editar exames e documentos" />
+      {hasExpiring && (
+        <div style={{ display: 'flex', gap: 10, padding: '12px 14px', borderRadius: '0.75rem', border: `1px solid hsl(0 84.2% 55% / 0.25)`, background: C.redLight }}>
+          <span style={{ color: C.red, marginTop: 1 }}><Svg d={ICONS.warn} size={14} /></span>
+          <div>
+            <p style={{ fontSize: 13, fontWeight: 700, color: C.redText }}>Exames Obrigatórios com vencimento próximo</p>
+            <p style={{ fontSize: 11, color: C.red, marginTop: 2 }}>Mormo e AIE têm validade de 60 dias. Renove antes do prazo para evitar impedimentos.</p>
           </div>
-          <Badge status={doc.status} />
         </div>
-      ))}
+      )}
+      {docs.length === 0 ? (
+        <div style={{ ...s.card, textAlign: 'center', color: C.muted, fontSize: 13 }}>
+          <p>Nenhum documento cadastrado.</p>
+        </div>
+      ) : docs.map(doc => {
+        // Permanentes nunca ficam urgentes/vencidos; cíclicos seguem a data
+        const st = !doc.notOwned && !isPermanent(doc) && doc.dueDate ? calculateAlertStatus(doc.dueDate).key : null;
+        const badgeStatus = doc.notOwned ? 'muted' : st ? alertBadgeStatus(st) : 'pending';
+        const isUrgent = badgeStatus === 'urgent';
+        const isWarning = badgeStatus === 'warning';
+        return (
+          <div key={doc.id} style={{ ...s.card, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12,
+            borderColor: isUrgent ? 'hsl(0 84.2% 55% / 0.3)' : isWarning ? 'hsl(38 92% 50% / 0.3)' : C.border,
+            background: isUrgent ? C.redLight : isWarning ? C.amberLight : C.card,
+          }}>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+              <span style={{ color: isUrgent ? C.red : isWarning ? C.amber : C.green, marginTop: 2 }}><Svg d={ICONS.file} size={14} /></span>
+              <div>
+                <p style={{ fontSize: 13, fontWeight: 700, color: C.fg }}>{doc.name}</p>
+                {doc.description && <p style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{doc.description}</p>}
+                <p style={{ fontSize: 11, marginTop: 4, fontWeight: 600, color: isUrgent ? C.redText : isWarning ? C.amberText : C.muted }}>
+                  {alertDueText(doc)}
+                </p>
+                <AttachmentLink alert={doc} />
+              </div>
+            </div>
+            <AlertStatusBadge alert={doc} />
+          </div>
+        );
+      })}
     </div>
   );
 }
 
-export const EquineProfile = ({ equine }: { equine: EquineProfileData }) => {
+export const EquineProfile = ({ equine, alerts = [] }: { equine: EquineProfileData; alerts?: EquineAlert[] }) => {
   const [tab, setTab] = useState<Tab>('overview');
   const [showDelete, setShowDelete] = useState(false);
   const [confirmText, setConfirmText] = useState('');
@@ -504,8 +619,8 @@ export const EquineProfile = ({ equine }: { equine: EquineProfileData }) => {
           })}
         </div>
         {tab === 'overview' && <NutritionTab equine={equine} />}
-        {tab === 'health' && <HealthTab />}
-        {tab === 'documents' && <DocumentsTab />}
+        {tab === 'health' && <HealthTab alerts={alerts} equineId={equine.id} />}
+        {tab === 'documents' && <DocumentsTab alerts={alerts} equineId={equine.id} />}
       </div>
 
       {/* Modal de exclusão */}

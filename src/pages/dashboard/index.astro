@@ -1,42 +1,131 @@
 ---
 export const prerender = false;
-// ─── Imports ──────────────────────────────────────────────────────────────────
-// REGRA: caminhos relativos simples, sempre com chaves { }
 
 import Layout from '../../layouts/Layout.astro';
 import Header from '../../components/dashboard/Header.tsx';
 import { CriticalAlerts } from '../../components/dashboard/CriticalAlerts.tsx';
+import type { Alert } from '../../components/dashboard/CriticalAlerts.tsx';
 import { EquineCard } from '../../components/dashboard/EquineCard.tsx';
 import type { Equine } from '../../components/dashboard/EquineCard.tsx';
+import { createServerSupabaseClient } from '../../lib/supabase';
+import { calculateAlertStatus } from '../../lib/alertStatus';
 
-// ─── Mock Data ────────────────────────────────────────────────────────────────
+const responseHeaders = new Headers();
+const supabase = createServerSupabaseClient(Astro.request, responseHeaders);
 
-const EQUINES: Equine[] = [
-  {
-    id: 'trovao',
-    name: 'Trovão',
-    breed: 'Quarto de Milha',
-    age: 7,
-    status: 'vaccine_due',
-    initials: 'TR',
-  },
-  {
-    id: 'serena',
-    name: 'Serena',
-    breed: 'Mangalarga Marchador',
-    age: 5,
-    status: 'vaccine_due',
-    initials: 'SR',
-  },
-  {
-    id: 'duque',
-    name: 'Duque',
-    breed: 'Puro Sangue Inglês',
-    age: 9,
-    status: 'doc_pending',
-    initials: 'DQ',
-  },
-];
+// ─── Dados reais ──────────────────────────────────────────────────────────────
+const { data: equinosRaw } = await supabase
+  .from('equinos')
+  .select('id, name, nickname, breed, birth_date, estimated_age')
+  .order('created_at', { ascending: false });
+
+const { data: alertRaw } = await supabase
+  .from('equine_alerts')
+  .select('id, equine_id, due_date, status_override, resolved_at, template:alert_templates(name, category, periodicity_months)');
+
+const equinos = equinosRaw ?? [];
+const alertRows = alertRaw ?? [];
+
+const BREED_LABEL: Record<string, string> = {
+  QUARTO_DE_MILHA: 'Quarto de Milha', MANGALARGA_MARCHADOR: 'Mangalarga Marchador',
+  PURO_SANGUE_INGLES: 'Puro Sangue Inglês', LUSITANO: 'Lusitano',
+  BRASILEIRO_DE_HIPISMO: 'Brasileiro de Hipismo', CRIOULO: 'Crioulo',
+  CAMPOLINA: 'Campolina', APPALOOSA: 'Appaloosa', PAINT_HORSE: 'Paint Horse',
+  ANDALUZ: 'Andaluz', ARABE: 'Árabe', HAFLINGER: 'Haflinger',
+  FRIESIO: 'Frísio', ARDENÊS: 'Ardenês', OTHER: 'Outra raça',
+};
+
+function calcAge(birthDate: string | null, estimatedAge: number | null): string {
+  if (birthDate) {
+    const months = Math.floor((Date.now() - new Date(birthDate).getTime()) / (1000 * 60 * 60 * 24 * 30.44));
+    return months < 24 ? `${months} meses` : `${Math.floor(months / 12)} anos`;
+  }
+  if (estimatedAge) return estimatedAge < 24 ? `${estimatedAge} meses` : `${Math.floor(estimatedAge / 12)} anos`;
+  return '—';
+}
+
+const RANK: Record<string, number> = { VENCIDA: 5, CRITICO: 4, URGENTE: 3, ATENCAO: 2 };
+
+function alertRank(a: any): number {
+  if (a.status_override === 'NAO_POSSUI') return -1;
+  const permanent = a.template?.periodicity_months == null;
+  if (permanent) return a.resolved_at ? 0 : 1;      // possui = em dia ; senão pendente
+  if (!a.due_date) return 1;                          // pendente sem data
+  const k = calculateAlertStatus(a.due_date).key;
+  if (k === 'PENDENTE') return 0;                     // data folgada = em dia
+  return RANK[k] ?? 0;
+}
+
+function alertDays(a: any): number | null {
+  const permanent = a.template?.periodicity_months == null;
+  if (permanent || !a.due_date) return null;
+  return calculateAlertStatus(a.due_date).daysRemaining;
+}
+
+const equineNameById = new Map(equinos.map((e: any) => [e.id, e.nickname || e.name]));
+
+// Pior rank por equino
+const worstByEquine = new Map<string, number>();
+for (const e of equinos) worstByEquine.set(e.id, 0);
+for (const a of alertRows) {
+  const r = alertRank(a);
+  const cur = worstByEquine.get(a.equine_id) ?? 0;
+  if (r > cur) worstByEquine.set(a.equine_id, r);
+}
+
+// KPIs
+let kpiEmDia = 0, kpiAtencao = 0, kpiCritico = 0;
+for (const e of equinos) {
+  const w = worstByEquine.get(e.id) ?? 0;
+  if (w >= 4) kpiCritico++;
+  else if (w >= 1) kpiAtencao++;
+  else kpiEmDia++;
+}
+
+// Status do card por equino
+function cardStatus(w: number): Equine['status'] {
+  if (w >= 4) return 'critical';
+  if (w >= 2) return 'vaccine_due';
+  if (w >= 1) return 'doc_pending';
+  return 'healthy';
+}
+
+const equineCards: Equine[] = equinos.map((e: any) => ({
+  id: e.id,
+  name: e.nickname || e.name,
+  breed: BREED_LABEL[e.breed] ?? e.breed,
+  age: 0,
+  ageText: calcAge(e.birth_date, e.estimated_age),
+  status: cardStatus(worstByEquine.get(e.id) ?? 0),
+  initials: (e.nickname || e.name).split(' ').slice(0, 2).map((w: string) => w[0]).join('').toUpperCase(),
+}));
+
+// Alertas ativos (rank >= 1) ordenados por urgência
+const activeAlerts = alertRows
+  .map((a: any) => ({ a, rank: alertRank(a), days: alertDays(a) }))
+  .filter((x) => x.rank >= 1)
+  .sort((x, y) => (y.rank - x.rank) || ((x.days ?? 9999) - (y.days ?? 9999)));
+
+const sidebarAlerts: Alert[] = activeAlerts.slice(0, 6).map(({ a, days }) => ({
+  id: a.id,
+  type: a.template?.category === 'Documento' ? 'exam' : 'vaccine',
+  horse: equineNameById.get(a.equine_id) ?? 'Equino',
+  description: a.template?.name ?? 'Item',
+  daysLeft: days,
+  equineId: a.equine_id,
+}));
+
+// Subtítulo do card Crítico
+const topCritical = activeAlerts.find((x) => x.rank >= 4);
+let criticoSubtitle = 'Nenhum item crítico';
+if (topCritical) {
+  const nome = topCritical.a.template?.name ?? 'Item';
+  const d = topCritical.days;
+  criticoSubtitle = d == null ? `${nome} pendente`
+    : d < 0 ? `${nome} vencido há ${Math.abs(d)} dia${Math.abs(d) !== 1 ? 's' : ''}`
+    : `${nome} vence em ${d} dia${d !== 1 ? 's' : ''}`;
+}
+const atencaoSubtitle = kpiAtencao > 0 ? 'Requer ação nos próximos dias' : 'Nenhum item em atenção';
 ---
 
 <Layout title="Dashboard — Equicore" description="Painel de controle Equicore">
@@ -82,7 +171,7 @@ const EQUINES: Equine[] = [
             </div>
           </div>
           <div class="flex items-end gap-1.5">
-            <span class="text-3xl md:text-4xl font-black tracking-tight" style="color: hsl(var(--foreground));">3</span>
+            <span class="text-3xl md:text-4xl font-black tracking-tight" style="color: hsl(var(--foreground));">{equinos.length}</span>
             <span class="text-xs md:text-sm pb-0.5" style="color: hsl(var(--muted-foreground));">equinos</span>
           </div>
           <p class="text-[11px] md:text-xs" style="color: hsl(var(--muted-foreground));">Cadastrados no sistema</p>
@@ -105,7 +194,7 @@ const EQUINES: Equine[] = [
             </div>
           </div>
           <div class="flex items-end gap-1.5">
-            <span class="text-3xl md:text-4xl font-black tracking-tight" style="color: hsl(142 71% 35%);">1</span>
+            <span class="text-3xl md:text-4xl font-black tracking-tight" style="color: hsl(142 71% 35%);">{kpiEmDia}</span>
             <span class="text-xs md:text-sm pb-0.5 flex items-center gap-0.5" style="color: hsl(142 71% 35%);">
               <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
               em ordem
@@ -131,10 +220,10 @@ const EQUINES: Equine[] = [
             </div>
           </div>
           <div class="flex items-end gap-1.5">
-            <span class="text-3xl md:text-4xl font-black tracking-tight" style="color: hsl(38 92% 30%);">1</span>
-            <span class="text-xs md:text-sm pb-0.5" style="color: hsl(38 92% 35%);">vacina vencendo</span>
+            <span class="text-3xl md:text-4xl font-black tracking-tight" style="color: hsl(38 92% 30%);">{kpiAtencao}</span>
+            <span class="text-xs md:text-sm pb-0.5" style="color: hsl(38 92% 35%);">{kpiAtencao === 1 ? 'item' : 'itens'}</span>
           </div>
-          <p class="text-[11px] md:text-xs" style="color: hsl(38 92% 35%);">Requer ação nos próximos dias</p>
+          <p class="text-[11px] md:text-xs" style="color: hsl(38 92% 35%);">{atencaoSubtitle}</p>
         </div>
 
         <!-- KPI: Crítico -->
@@ -155,10 +244,10 @@ const EQUINES: Equine[] = [
             </div>
           </div>
           <div class="flex items-end gap-1.5">
-            <span class="text-3xl md:text-4xl font-black tracking-tight" style="color: hsl(0 84.2% 40%);">1</span>
-            <span class="text-xs md:text-sm pb-0.5" style="color: hsl(0 84.2% 45%);">requer ação urgente</span>
+            <span class="text-3xl md:text-4xl font-black tracking-tight" style="color: hsl(0 84.2% 40%);">{kpiCritico}</span>
+            <span class="text-xs md:text-sm pb-0.5" style="color: hsl(0 84.2% 45%);">{kpiCritico === 1 ? 'requer ação' : 'requerem ação'}</span>
           </div>
-          <p class="text-[11px] md:text-xs" style="color: hsl(0 84.2% 45%);">Exame de Mormo vence em 3 dias</p>
+          <p class="text-[11px] md:text-xs" style="color: hsl(0 84.2% 45%);">{criticoSubtitle}</p>
         </div>
 
       </div>
@@ -169,7 +258,7 @@ const EQUINES: Equine[] = [
 
       <!-- Coluna Esquerda: Alertas Críticos (4 cols) -->
       <div class="lg:col-span-4 h-full">
-        <CriticalAlerts client:load />
+        <CriticalAlerts client:load alerts={sidebarAlerts} total={activeAlerts.length} />
       </div>
 
       <!-- Coluna Direita: Plantel (8 cols) -->
@@ -182,11 +271,11 @@ const EQUINES: Equine[] = [
               Plantel
             </h2>
             <p class="text-xs mt-0.5" style="color: hsl(var(--muted-foreground));">
-              {EQUINES.length} equinos cadastrados
+              {equinos.length} {equinos.length === 1 ? 'equino cadastrado' : 'equinos cadastrados'}
             </p>
           </div>
           <a
-          href="#"
+            href="/dashboard/plantel"
             class="text-xs font-semibold px-3 py-1.5 rounded-lg transition-all duration-200 hover:bg-muted"
             style="color: hsl(168 83% 29%);"
           >
@@ -218,7 +307,13 @@ const EQUINES: Equine[] = [
 
         <!-- EquineCards list -->
         <div class="flex flex-col gap-3" id="equine-list">
-          {EQUINES.map((equine) => (
+          {equineCards.length === 0 ? (
+            <div class="text-center py-10" style="color: hsl(var(--muted-foreground));">
+              <p class="text-2xl mb-2">🐴</p>
+              <p class="text-sm font-semibold" style="color: hsl(var(--foreground));">Nenhum equino cadastrado</p>
+              <a href="/dashboard/plantel/novo" class="text-sm font-semibold" style="color: hsl(168 83% 29%);">Cadastrar primeiro equino →</a>
+            </div>
+          ) : equineCards.map((equine) => (
             <EquineCard equine={equine} client:load />
           ))}
         </div>

@@ -659,17 +659,32 @@ export default function EquineFormStepper({ initialData, equineId }: { initialDa
       mat_grandmother: nullify(form.maternalGrandmotherName),
     };
 
-    const { error } = isEdit
-      ? await supabase.from('equinos').update(payload).eq('id', equineId)
-      : await supabase.from('equinos').insert(payload);
+    if (isEdit) {
+      const { error } = await supabase.from('equinos').update(payload).eq('id', equineId);
+      setSaving(false);
+      if (error) {
+        setSaveError('Erro ao salvar. Tente novamente.');
+        return;
+      }
+      window.location.href = `/dashboard/equino/${equineId}`;
+      return;
+    }
+
+    // Criação: insere e captura o id para o onboarding de saúde
+    const { data: created, error } = await supabase
+      .from('equinos')
+      .insert(payload)
+      .select('id')
+      .single();
     setSaving(false);
 
-    if (error) {
+    if (error || !created) {
       setSaveError('Erro ao salvar. Tente novamente.');
       return;
     }
 
-    window.location.href = isEdit ? `/dashboard/equino/${equineId}` : '/dashboard/plantel';
+    // O trigger gera os alertas obrigatórios; segue para o onboarding de saúde
+    window.location.href = `/dashboard/equino/${created.id}/setup-saude`;
   }
 
   const isFirst = step === 1;
