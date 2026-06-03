@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { createClient } from '../../lib/supabase';
 
 const C = {
   green: 'hsl(168 83% 29%)',
@@ -15,6 +16,7 @@ const C = {
   amberLight: 'hsl(38 92% 50% / 0.1)',
   red: 'hsl(0 84.2% 55%)',
   redText: 'hsl(0 84.2% 38%)',
+  redLight: 'hsl(0 84.2% 55% / 0.08)',
 };
 
 const inputStyle: React.CSSProperties = {
@@ -36,12 +38,21 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'seguranca', label: 'Segurança' },
 ];
 
-const PLAN_FEATURES: Record<string, { name: string; equines: string; storage: string; color: string; bg: string }> = {
-  free: { name: 'Gratuito', equines: '2 equinos', storage: '500 MB', color: C.muted, bg: C.muted_bg },
-  starter: { name: 'Starter', equines: '5 equinos', storage: '2 GB', color: 'hsl(217 91% 40%)', bg: 'hsl(217 91% 60% / 0.08)' },
-  pro: { name: 'Pro', equines: '15 equinos', storage: '10 GB', color: C.green, bg: C.greenLight },
-  haras: { name: 'Haras', equines: 'Ilimitado', storage: '30 GB', color: 'hsl(280 60% 40%)', bg: 'hsl(280 60% 50% / 0.08)' },
+const PLAN_FEATURES: Record<string, { name: string; equines: string; storage: string; color: string; bg: string; maxEquines: number; maxStorage: number; price: string }> = {
+  free:    { name: 'Gratuito', equines: '2 equinos',    storage: '500 MB',   color: C.muted,                     bg: C.muted_bg,                        maxEquines: 2,     maxStorage: 0.5,  price: 'R$ 0' },
+  starter: { name: 'Starter',  equines: '5 equinos',    storage: '2 GB',     color: 'hsl(217 91% 40%)',           bg: 'hsl(217 91% 60% / 0.08)',         maxEquines: 5,     maxStorage: 2,    price: 'R$ 39/mês' },
+  pro:     { name: 'Pro',      equines: '15 equinos',   storage: '10 GB',    color: C.green,                     bg: C.greenLight,                      maxEquines: 15,    maxStorage: 10,   price: 'R$ 89/mês' },
+  haras:   { name: 'Haras',    equines: 'Ilimitado',    storage: '30 GB',    color: 'hsl(280 60% 40%)',           bg: 'hsl(280 60% 50% / 0.08)',         maxEquines: 9999,  maxStorage: 30,   price: 'R$ 189/mês' },
 };
+
+const BR_STATES = ['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'];
+
+function getInitials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
 
 function SectionCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -54,47 +65,137 @@ function SectionCard({ title, children }: { title: string; children: React.React
   );
 }
 
-function ProfileTab() {
-  const [name, setName] = useState('Sabrina Santos');
-  const [phone, setPhone] = useState('(65) 99123-4567');
-  const [farmName, setFarmName] = useState('Haras Santa Clara');
-  const [farmCity, setFarmCity] = useState('Cuiabá');
-  const [farmState, setFarmState] = useState('MT');
-  const [saved, setSaved] = useState(false);
+function Toggle({ checked, onChange }: { checked: boolean; onChange: () => void }) {
+  return (
+    <button type="button" onClick={onChange} style={{
+      width: 44, height: 24, borderRadius: 999, border: 'none', cursor: 'pointer', position: 'relative', padding: 0,
+      background: checked ? C.green : 'hsl(var(--muted))', transition: 'background 0.2s', flexShrink: 0,
+    }}>
+      <div style={{
+        width: 18, height: 18, borderRadius: '50%', background: '#fff',
+        position: 'absolute', top: 3, left: checked ? 23 : 3, transition: 'left 0.2s',
+        boxShadow: '0 1px 3px hsl(0 0% 0% / 0.2)',
+      }} />
+    </button>
+  );
+}
 
-  function handleSave(e: React.FormEvent) {
+// ─── Aba Perfil ────────────────────────────────────────────────────────────────
+
+function ProfileTab({ userId, email }: { userId: string; email: string }) {
+  const supabase = createClient();
+
+  const [name, setName]           = useState('');
+  const [phone, setPhone]         = useState('');
+  const [farmName, setFarmName]   = useState('');
+  const [farmCity, setFarmCity]   = useState('');
+  const [farmState, setFarmState] = useState('MT');
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [loading, setLoading]     = useState(true);
+  const [saving, setSaving]       = useState(false);
+  const [toast, setToast]         = useState<{ ok: boolean; msg: string } | null>(null);
+
+  useEffect(() => {
+    async function load() {
+      const { data } = await supabase
+        .from('profiles')
+        .select('full_name, phone, farm_name, farm_city, farm_state, avatar_url, plan')
+        .eq('id', userId)
+        .single();
+
+      if (data) {
+        setName(data.full_name ?? '');
+        setPhone(data.phone ?? '');
+        setFarmName(data.farm_name ?? '');
+        setFarmCity(data.farm_city ?? '');
+        setFarmState(data.farm_state ?? 'MT');
+        setAvatarUrl(data.avatar_url ?? null);
+      }
+      setLoading(false);
+    }
+    load();
+  }, [userId]);
+
+  async function handleSave(e: React.FormEvent) {
     e.preventDefault();
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2500);
+    setSaving(true);
+    const { error } = await supabase.from('profiles').upsert({
+      id: userId,
+      full_name: name,
+      phone: phone || null,
+      farm_name: farmName || null,
+      farm_city: farmCity || null,
+      farm_state: farmState || null,
+    });
+    setSaving(false);
+    if (error) {
+      setToast({ ok: false, msg: 'Erro ao salvar: ' + error.message });
+    } else {
+      setToast({ ok: true, msg: '✓ Dados salvos com sucesso!' });
+    }
+    setTimeout(() => setToast(null), 3000);
   }
+
+  async function handleAvatarChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      setToast({ ok: false, msg: 'Arquivo muito grande. Máx. 5 MB.' });
+      setTimeout(() => setToast(null), 3000);
+      return;
+    }
+    const ext = file.name.split('.').pop();
+    const path = `${userId}/avatar.${ext}`;
+    const { error: uploadError } = await supabase.storage.from('avatars').upload(path, file, { upsert: true });
+    if (uploadError) {
+      setToast({ ok: false, msg: 'Erro ao enviar foto.' });
+      setTimeout(() => setToast(null), 3000);
+      return;
+    }
+    const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(path);
+    const publicUrl = urlData.publicUrl + `?t=${Date.now()}`;
+    await supabase.from('profiles').upsert({ id: userId, avatar_url: publicUrl });
+    setAvatarUrl(publicUrl);
+    setToast({ ok: true, msg: '✓ Foto atualizada!' });
+    setTimeout(() => setToast(null), 3000);
+  }
+
+  if (loading) return <p style={{ color: C.muted, fontSize: '0.875rem', padding: '2rem 0' }}>Carregando…</p>;
+
+  const initials = getInitials(name);
 
   return (
     <form onSubmit={handleSave}>
-      {/* Avatar section */}
+      {/* Avatar */}
       <SectionCard title="Foto do perfil">
         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-          <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'linear-gradient(135deg, hsl(168 83% 32%), hsl(168 83% 20%))', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '1.25rem', fontWeight: 800, flexShrink: 0 }}>
-            SS
-          </div>
+          {avatarUrl ? (
+            <img src={avatarUrl} alt={name} style={{ width: 64, height: 64, borderRadius: '50%', objectFit: 'cover', flexShrink: 0, border: `2px solid ${C.border}` }} />
+          ) : (
+            <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'linear-gradient(135deg, hsl(168 83% 32%), hsl(168 83% 20%))', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '1.25rem', fontWeight: 800, flexShrink: 0, letterSpacing: '-0.02em' }}>
+              {initials}
+            </div>
+          )}
           <div>
-            <button type="button" style={{ padding: '0.5rem 1rem', borderRadius: '0.625rem', background: C.muted_bg, color: C.fg, fontWeight: 600, fontSize: '0.8125rem', border: `1px solid ${C.border}`, cursor: 'pointer' }}>
+            <label style={{ padding: '0.5rem 1rem', borderRadius: '0.625rem', background: C.muted_bg, color: C.fg, fontWeight: 600, fontSize: '0.8125rem', border: `1px solid ${C.border}`, cursor: 'pointer', display: 'inline-block' }}>
               Alterar foto
-            </button>
+              <input type="file" accept="image/jpeg,image/png,image/heic" onChange={handleAvatarChange} style={{ display: 'none' }} />
+            </label>
             <p style={{ fontSize: '0.75rem', color: C.muted, marginTop: 4 }}>JPG, PNG ou HEIC. Máx. 5 MB.</p>
           </div>
         </div>
       </SectionCard>
 
-      {/* Personal data */}
+      {/* Dados pessoais */}
       <SectionCard title="Dados pessoais">
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.875rem' }}>
           <div style={{ gridColumn: '1 / -1' }}>
             <label style={labelStyle}>Nome completo</label>
-            <input type="text" value={name} onChange={e => setName(e.target.value)} style={inputStyle} />
+            <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Seu nome" style={inputStyle} />
           </div>
           <div style={{ gridColumn: '1 / -1' }}>
             <label style={labelStyle}>E-mail</label>
-            <input type="email" value="sabrina@harasantaclara.com.br" disabled style={{ ...inputStyle, opacity: 0.6, cursor: 'not-allowed' }} />
+            <input type="email" value={email} disabled style={{ ...inputStyle, opacity: 0.6, cursor: 'not-allowed' }} />
             <p style={{ fontSize: '0.75rem', color: C.muted, marginTop: 4 }}>Para alterar o e-mail, entre em contato com o suporte.</p>
           </div>
           <div>
@@ -104,33 +205,35 @@ function ProfileTab() {
         </div>
       </SectionCard>
 
-      {/* Farm data */}
+      {/* Dados do haras */}
       <SectionCard title="Dados do haras / propriedade">
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.875rem' }}>
           <div style={{ gridColumn: '1 / -1' }}>
             <label style={labelStyle}>Nome do haras</label>
-            <input type="text" value={farmName} onChange={e => setFarmName(e.target.value)} style={inputStyle} />
+            <input type="text" value={farmName} onChange={e => setFarmName(e.target.value)} placeholder="Haras Santa Clara (opcional)" style={inputStyle} />
           </div>
           <div>
             <label style={labelStyle}>Cidade</label>
-            <input type="text" value={farmCity} onChange={e => setFarmCity(e.target.value)} style={inputStyle} />
+            <input type="text" value={farmCity} onChange={e => setFarmCity(e.target.value)} placeholder="Cuiabá" style={inputStyle} />
           </div>
           <div>
             <label style={labelStyle}>Estado</label>
             <select value={farmState} onChange={e => setFarmState(e.target.value)} style={{ ...inputStyle, appearance: 'auto' }}>
-              {['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'].map(s => (
-                <option key={s} value={s}>{s}</option>
-              ))}
+              {BR_STATES.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
         </div>
       </SectionCard>
 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        {saved && <p style={{ fontSize: '0.875rem', color: C.green, fontWeight: 600 }}>✓ Dados salvos com sucesso!</p>}
+        {toast && (
+          <p style={{ fontSize: '0.875rem', fontWeight: 600, color: toast.ok ? C.green : C.redText }}>
+            {toast.msg}
+          </p>
+        )}
         <div style={{ marginLeft: 'auto' }}>
-          <button type="submit" style={{ padding: '0.625rem 1.5rem', borderRadius: '0.75rem', background: C.green, color: '#fff', fontWeight: 600, fontSize: '0.875rem', border: 'none', cursor: 'pointer' }}>
-            Salvar alterações
+          <button type="submit" disabled={saving} style={{ padding: '0.625rem 1.5rem', borderRadius: '0.75rem', background: saving ? 'hsl(168 83% 40%)' : C.green, color: '#fff', fontWeight: 600, fontSize: '0.875rem', border: 'none', cursor: saving ? 'not-allowed' : 'pointer' }}>
+            {saving ? 'Salvando…' : 'Salvar alterações'}
           </button>
         </div>
       </div>
@@ -138,24 +241,43 @@ function ProfileTab() {
   );
 }
 
-function PlanoTab() {
-  const currentPlan = 'pro';
-  const plan = PLAN_FEATURES[currentPlan];
-  const usedEquines = 6;
-  const usedStorage = 3.2;
+// ─── Aba Plano ─────────────────────────────────────────────────────────────────
+
+function PlanoTab({ userId }: { userId: string }) {
+  const supabase = createClient();
+  const [planKey, setPlanKey]       = useState('free');
+  const [usedEquines, setUsedEquines] = useState(0);
+  const [loading, setLoading]       = useState(true);
+
+  useEffect(() => {
+    async function load() {
+      const [{ data: profile }, { count }] = await Promise.all([
+        supabase.from('profiles').select('plan').eq('id', userId).single(),
+        supabase.from('equines').select('id', { count: 'exact', head: true }).eq('owner_id', userId),
+      ]);
+      if (profile?.plan) setPlanKey(profile.plan);
+      setUsedEquines(count ?? 0);
+      setLoading(false);
+    }
+    load();
+  }, [userId]);
+
+  if (loading) return <p style={{ color: C.muted, fontSize: '0.875rem', padding: '2rem 0' }}>Carregando…</p>;
+
+  const plan = PLAN_FEATURES[planKey] ?? PLAN_FEATURES.free;
+  const equinesPct = planKey === 'haras' ? 0 : Math.min((usedEquines / plan.maxEquines) * 100, 100);
 
   return (
     <div>
-      {/* Current plan */}
       <SectionCard title="Plano atual">
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <div style={{ width: 48, height: 48, borderRadius: '0.75rem', background: plan.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', border: `1px solid ${plan.color}33` }}>
-              <span style={{ fontSize: '1.25rem', fontWeight: 900, color: plan.color }}>P</span>
+              <span style={{ fontSize: '1.25rem', fontWeight: 900, color: plan.color }}>{plan.name[0]}</span>
             </div>
             <div>
               <p style={{ fontSize: '1.25rem', fontWeight: 800, color: C.fg }}>{plan.name}</p>
-              <p style={{ fontSize: '0.8125rem', color: C.muted }}>Faturamento mensal · Próximo vencimento: 24/06/2026</p>
+              <p style={{ fontSize: '0.8125rem', color: C.muted }}>{plan.price} · {plan.equines} · {plan.storage}</p>
             </div>
           </div>
           <a href="/dashboard/assinatura" style={{ padding: '0.5rem 1.25rem', borderRadius: '0.625rem', border: `1px solid ${C.border}`, color: C.fg, fontSize: '0.875rem', fontWeight: 600, textDecoration: 'none', background: C.muted_bg }}>
@@ -163,47 +285,26 @@ function PlanoTab() {
           </a>
         </div>
 
-        {/* Usage */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginTop: 20 }}>
-          {[
-            { label: 'Equinos', used: usedEquines, max: 15, unit: 'equinos', pct: (usedEquines / 15) * 100 },
-            { label: 'Armazenamento', used: usedStorage, max: 10, unit: 'GB', pct: (usedStorage / 10) * 100 },
-          ].map((u) => (
-            <div key={u.label}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: C.fg }}>{u.label}</span>
-                <span style={{ fontSize: '0.8125rem', color: C.muted }}>{u.used} / {u.max} {u.unit}</span>
-              </div>
-              <div style={{ height: 6, borderRadius: 999, background: 'hsl(var(--muted))', overflow: 'hidden' }}>
-                <div style={{ height: '100%', borderRadius: 999, width: `${u.pct}%`, background: u.pct > 80 ? C.amber : C.green, transition: 'width 0.3s' }} />
-              </div>
-              <p style={{ fontSize: '0.6875rem', color: C.muted, marginTop: 4 }}>{u.pct.toFixed(0)}% utilizado</p>
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+              <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: C.fg }}>Equinos</span>
+              <span style={{ fontSize: '0.8125rem', color: C.muted }}>
+                {usedEquines} / {planKey === 'haras' ? '∞' : plan.maxEquines}
+              </span>
             </div>
-          ))}
+            <div style={{ height: 6, borderRadius: 999, background: 'hsl(var(--muted))', overflow: 'hidden' }}>
+              <div style={{ height: '100%', borderRadius: 999, width: `${equinesPct}%`, background: equinesPct > 80 ? C.amber : C.green, transition: 'width 0.3s' }} />
+            </div>
+            <p style={{ fontSize: '0.6875rem', color: C.muted, marginTop: 4 }}>
+              {planKey === 'haras' ? 'Ilimitado' : `${equinesPct.toFixed(0)}% utilizado`}
+            </p>
+          </div>
         </div>
       </SectionCard>
 
-      {/* Invoices */}
       <SectionCard title="Últimas faturas">
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-          {[
-            { date: '24/05/2026', amount: 'R$ 89,00', status: 'Pago', id: 'INV-2026-05' },
-            { date: '24/04/2026', amount: 'R$ 89,00', status: 'Pago', id: 'INV-2026-04' },
-            { date: '24/03/2026', amount: 'R$ 89,00', status: 'Pago', id: 'INV-2026-03' },
-          ].map((inv) => (
-            <div key={inv.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.75rem 0', borderBottom: `1px solid ${C.border}` }}>
-              <div>
-                <p style={{ fontSize: '0.875rem', fontWeight: 600, color: C.fg }}>{inv.id}</p>
-                <p style={{ fontSize: '0.75rem', color: C.muted }}>{inv.date}</p>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <span style={{ fontSize: '0.875rem', fontWeight: 700, color: C.fg }}>{inv.amount}</span>
-                <span style={{ fontSize: '0.75rem', fontWeight: 700, padding: '2px 10px', borderRadius: 999, background: 'hsl(142 71% 45% / 0.12)', color: 'hsl(142 71% 28%)' }}>{inv.status}</span>
-                <a href="#" style={{ fontSize: '0.75rem', color: C.green, textDecoration: 'none' }}>PDF</a>
-              </div>
-            </div>
-          ))}
-        </div>
+        <p style={{ fontSize: '0.8125rem', color: C.muted }}>Histórico de faturas disponível em breve.</p>
       </SectionCard>
 
       <div style={{ padding: '1rem', borderRadius: '0.75rem', background: C.redLight, border: `1px solid ${C.red}33` }}>
@@ -217,35 +318,24 @@ function PlanoTab() {
   );
 }
 
+// ─── Aba Notificações ──────────────────────────────────────────────────────────
+
 function NotificacoesTab() {
   const [emailEnabled, setEmailEnabled] = useState(true);
-  const [pushEnabled, setPushEnabled] = useState(false);
-  const [vaccineDays, setVaccineDays] = useState([30, 15, 7, 3]);
-  const [docDays, setDocDays] = useState([30, 15, 7]);
+  const [pushEnabled, setPushEnabled]   = useState(false);
+  const [vaccineDays, setVaccineDays]   = useState([30, 15, 7, 3]);
+  const [docDays, setDocDays]           = useState([30, 15, 7]);
 
   function toggleDay(list: number[], set: (v: number[]) => void, day: number) {
     set(list.includes(day) ? list.filter(d => d !== day) : [...list, day].sort((a, b) => b - a));
   }
-
-  const Toggle = ({ checked, onChange }: { checked: boolean; onChange: () => void }) => (
-    <button type="button" onClick={onChange} style={{
-      width: 44, height: 24, borderRadius: 999, border: 'none', cursor: 'pointer', position: 'relative', padding: 0,
-      background: checked ? C.green : 'hsl(var(--muted))', transition: 'background 0.2s',
-    }}>
-      <div style={{
-        width: 18, height: 18, borderRadius: '50%', background: '#fff',
-        position: 'absolute', top: 3, left: checked ? 23 : 3, transition: 'left 0.2s',
-        boxShadow: '0 1px 3px hsl(0 0% 0% / 0.2)',
-      }} />
-    </button>
-  );
 
   return (
     <div>
       <SectionCard title="Canais de notificação">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           {[
-            { label: 'E-mail', desc: 'Alertas enviados para sabrina@harasantaclara.com.br', checked: emailEnabled, onChange: () => setEmailEnabled(v => !v) },
+            { label: 'E-mail', desc: 'Alertas enviados por e-mail', checked: emailEnabled, onChange: () => setEmailEnabled(v => !v) },
             { label: 'Push / Navegador', desc: 'Notificações no navegador (requer permissão)', checked: pushEnabled, onChange: () => setPushEnabled(v => !v) },
           ].map((item) => (
             <div key={item.label} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
@@ -290,50 +380,59 @@ function NotificacoesTab() {
   );
 }
 
+// ─── Aba Segurança ─────────────────────────────────────────────────────────────
+
 function SegurancaTab() {
-  const [currentPwd, setCurrentPwd] = useState('');
-  const [newPwd, setNewPwd] = useState('');
+  const supabase = createClient();
+
+  const [newPwd, setNewPwd]         = useState('');
   const [confirmPwd, setConfirmPwd] = useState('');
+  const [saving, setSaving]         = useState(false);
+  const [toast, setToast]           = useState<{ ok: boolean; msg: string } | null>(null);
+
+  async function handlePasswordChange(e: React.FormEvent) {
+    e.preventDefault();
+    if (newPwd.length < 8) {
+      setToast({ ok: false, msg: 'A senha deve ter no mínimo 8 caracteres.' });
+      setTimeout(() => setToast(null), 3000);
+      return;
+    }
+    if (newPwd !== confirmPwd) {
+      setToast({ ok: false, msg: 'As senhas não coincidem.' });
+      setTimeout(() => setToast(null), 3000);
+      return;
+    }
+    setSaving(true);
+    const { error } = await supabase.auth.updateUser({ password: newPwd });
+    setSaving(false);
+    if (error) {
+      setToast({ ok: false, msg: 'Erro: ' + error.message });
+    } else {
+      setToast({ ok: true, msg: '✓ Senha atualizada com sucesso!' });
+      setNewPwd('');
+      setConfirmPwd('');
+    }
+    setTimeout(() => setToast(null), 3000);
+  }
 
   return (
     <div>
       <SectionCard title="Alterar senha">
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem', maxWidth: 400 }}>
-          {[
-            { label: 'Senha atual', value: currentPwd, onChange: setCurrentPwd },
-            { label: 'Nova senha', value: newPwd, onChange: setNewPwd },
-            { label: 'Confirmar nova senha', value: confirmPwd, onChange: setConfirmPwd },
-          ].map((f) => (
-            <div key={f.label}>
-              <label style={labelStyle}>{f.label}</label>
-              <input type="password" value={f.value} onChange={e => f.onChange(e.target.value)} placeholder="••••••••" style={inputStyle} />
-            </div>
-          ))}
+        <form onSubmit={handlePasswordChange} style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem', maxWidth: 400 }}>
+          <div>
+            <label style={labelStyle}>Nova senha</label>
+            <input type="password" value={newPwd} onChange={e => setNewPwd(e.target.value)} placeholder="Mínimo 8 caracteres" style={inputStyle} />
+          </div>
+          <div>
+            <label style={labelStyle}>Confirmar nova senha</label>
+            <input type="password" value={confirmPwd} onChange={e => setConfirmPwd(e.target.value)} placeholder="••••••••" style={inputStyle} />
+          </div>
           <p style={{ fontSize: '0.75rem', color: C.muted }}>Mínimo 8 caracteres. Use letras, números e símbolos para maior segurança.</p>
-          <button style={{ padding: '0.625rem 1.25rem', borderRadius: '0.625rem', background: C.green, color: '#fff', fontWeight: 600, fontSize: '0.875rem', border: 'none', cursor: 'pointer', width: 'fit-content' }}>
-            Atualizar senha
+          {toast && <p style={{ fontSize: '0.875rem', fontWeight: 600, color: toast.ok ? C.green : C.redText }}>{toast.msg}</p>}
+          <button type="submit" disabled={saving} style={{ padding: '0.625rem 1.25rem', borderRadius: '0.625rem', background: saving ? 'hsl(168 83% 40%)' : C.green, color: '#fff', fontWeight: 600, fontSize: '0.875rem', border: 'none', cursor: saving ? 'not-allowed' : 'pointer', width: 'fit-content' }}>
+            {saving ? 'Salvando…' : 'Atualizar senha'}
           </button>
-        </div>
-      </SectionCard>
-
-      <SectionCard title="Sessões ativas">
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {[
-            { device: 'Chrome — macOS', ip: '189.4.xxx.xxx', last: 'Agora mesmo', current: true },
-            { device: 'Safari — iPhone 14', ip: '189.4.xxx.xxx', last: 'Há 2 horas', current: false },
-          ].map((s) => (
-            <div key={s.device} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.75rem', borderRadius: '0.75rem', border: `1px solid ${C.border}`, background: s.current ? C.greenLight : 'transparent' }}>
-              <div>
-                <p style={{ fontSize: '0.875rem', fontWeight: 600, color: C.fg }}>{s.device}</p>
-                <p style={{ fontSize: '0.75rem', color: C.muted }}>IP: {s.ip} · {s.last}</p>
-              </div>
-              {s.current
-                ? <span style={{ fontSize: '0.75rem', fontWeight: 700, color: C.green, background: C.greenLight, padding: '2px 10px', borderRadius: 999 }}>Atual</span>
-                : <button style={{ fontSize: '0.75rem', fontWeight: 600, color: C.redText, background: 'transparent', border: 'none', cursor: 'pointer' }}>Encerrar</button>
-              }
-            </div>
-          ))}
-        </div>
+        </form>
       </SectionCard>
 
       <SectionCard title="Excluir conta">
@@ -346,8 +445,30 @@ function SegurancaTab() {
   );
 }
 
+// ─── Root ──────────────────────────────────────────────────────────────────────
+
 export default function ProfilePage() {
-  const [tab, setTab] = useState<Tab>('perfil');
+  const supabase = createClient();
+  const [tab, setTab]     = useState<Tab>('perfil');
+  const [userId, setUserId] = useState<string | null>(null);
+  const [email, setEmail]   = useState('');
+  const [authLoading, setAuthLoading] = useState(true);
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      if (data.user) {
+        setUserId(data.user.id);
+        setEmail(data.user.email ?? '');
+      }
+      setAuthLoading(false);
+    });
+  }, []);
+
+  if (authLoading) return null;
+  if (!userId) {
+    window.location.href = '/login';
+    return null;
+  }
 
   return (
     <div style={{ maxWidth: 760, margin: '0 auto' }}>
@@ -356,7 +477,6 @@ export default function ProfilePage() {
         <p style={{ fontSize: '0.8125rem', color: C.muted, marginTop: 2 }}>Gerencie seus dados, plano e configurações</p>
       </div>
 
-      {/* Tab navigation */}
       <div style={{ display: 'flex', gap: 2, padding: 4, background: C.muted_bg, borderRadius: '0.875rem', marginBottom: '1.5rem', overflowX: 'auto' }}>
         {TABS.map(t => {
           const active = tab === t.id;
@@ -372,10 +492,10 @@ export default function ProfilePage() {
         })}
       </div>
 
-      {tab === 'perfil' && <ProfileTab />}
-      {tab === 'plano' && <PlanoTab />}
+      {tab === 'perfil'       && <ProfileTab userId={userId} email={email} />}
+      {tab === 'plano'        && <PlanoTab userId={userId} />}
       {tab === 'notificacoes' && <NotificacoesTab />}
-      {tab === 'seguranca' && <SegurancaTab />}
+      {tab === 'seguranca'    && <SegurancaTab />}
     </div>
   );
 }

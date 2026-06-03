@@ -169,15 +169,25 @@ function LogoutButton() {
 
 // ─── Avatar ───────────────────────────────────────────────────────────────────
 
-function Avatar() {
+function getInitials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+function Avatar({ name, avatarUrl }: { name: string; avatarUrl: string | null }) {
   return (
     <a
       href="/dashboard/perfil"
       aria-label="Perfil do usuário"
-      className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white cursor-pointer transition-all duration-200 hover:ring-2 hover:ring-offset-2 hover:ring-[hsl(168_83%_29%)] dark:hover:ring-offset-[hsl(240_10%_3.9%)]"
-      style={{ background: 'linear-gradient(135deg, hsl(168 83% 29%), hsl(168 83% 20%))' }}
+      className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white cursor-pointer transition-all duration-200 hover:ring-2 hover:ring-offset-2 hover:ring-[hsl(168_83%_29%)] dark:hover:ring-offset-[hsl(240_10%_3.9%)] overflow-hidden flex-shrink-0"
+      style={avatarUrl ? undefined : { background: 'linear-gradient(135deg, hsl(168 83% 29%), hsl(168 83% 20%))' }}
     >
-      SS
+      {avatarUrl
+        ? <img src={avatarUrl} alt={name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+        : getInitials(name)
+      }
     </a>
   );
 }
@@ -211,10 +221,27 @@ const NAV_LINKS = [
 export default function Header({ currentPath }: { currentPath?: string }) {
   const [isDark, setIsDark] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [userName, setUserName] = useState('');
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
 
   useEffect(() => {
-    // Lê o tema atual do documento (definido pelo script inline no Layout.astro)
     setIsDark(document.documentElement.classList.contains('dark'));
+
+    const supabase = createClient();
+    supabase.auth.getUser().then(({ data }) => {
+      if (!data.user) return;
+      supabase
+        .from('profiles')
+        .select('full_name, avatar_url')
+        .eq('id', data.user.id)
+        .single()
+        .then(({ data: profile }) => {
+          if (profile) {
+            setUserName(profile.full_name ?? '');
+            setAvatarUrl(profile.avatar_url ?? null);
+          }
+        });
+    });
   }, []);
 
   function toggleTheme() {
@@ -256,7 +283,7 @@ export default function Header({ currentPath }: { currentPath?: string }) {
             <NotificationBell />
             <ThemeToggle isDark={isDark} onToggle={toggleTheme} />
             <div className="w-px h-5 bg-[hsl(var(--border))] mx-2" />
-            <Avatar />
+            <Avatar name={userName} avatarUrl={avatarUrl} />
             <LogoutButton />
           </div>
 
@@ -290,13 +317,10 @@ export default function Header({ currentPath }: { currentPath?: string }) {
               />
             ))}
             <div className="mt-3 pt-3 border-t border-[hsl(var(--border))] flex items-center gap-3">
-              <Avatar />
+              <Avatar name={userName} avatarUrl={avatarUrl} />
               <div style={{ flex: 1 }}>
                 <p className="text-sm font-medium" style={{ color: 'hsl(var(--foreground))' }}>
-                  Sabrina Santos
-                </p>
-                <p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                  Administradora
+                  {userName || '—'}
                 </p>
               </div>
               <LogoutButton />
