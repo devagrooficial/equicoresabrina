@@ -110,7 +110,7 @@ export default function LoginForm() {
     <div style={{ width: '100%', maxWidth: 400 }}>
       <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
         <img
-          src={isDark ? '/logo-white.svg' : '/logo-dark.svg'}
+          src={isDark ? '/images/logowhite.png' : '/images/logodark.png'}
           alt="EquiCore"
           style={{ height: 36, margin: '0 auto', display: 'block' }}
           onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
