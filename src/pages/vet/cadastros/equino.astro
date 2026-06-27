@@ -1,0 +1,14 @@
+---
+export const prerender = false;
+
+import VetLayout from '../../../layouts/VetLayout.astro';
+import EquinoVetForm from '../../../components/vet/EquinoVetForm';
+
+const editId = Astro.url.searchParams.get('id');
+---
+
+<VetLayout title="Cadastro do Animal — Equicore Vet">
+  <main class="w-full max-w-7xl mx-auto px-4 md:px-8 py-8">
+    <EquinoVetForm client:load editId={editId} />
+  </main>
+</VetLayout>

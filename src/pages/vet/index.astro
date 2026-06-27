@@ -1,0 +1,44 @@
+---
+export const prerender = false;
+
+import VetLayout from '../../layouts/VetLayout.astro';
+import VetDashboard from '../../components/vet/VetDashboard';
+import { createServerSupabaseClient } from '../../lib/supabase';
+
+const responseHeaders = new Headers();
+const supabase = createServerSupabaseClient(Astro.request, responseHeaders);
+
+const { data: { session } } = await supabase.auth.getSession();
+
+if (!session) {
+  return Astro.redirect('/login');
+}
+
+// Perfil do veterinário
+const { data: profile } = await supabase
+  .from('profiles')
+  .select('full_name, crmv, specialty, role, admin')
+  .eq('id', session.user.id)
+  .maybeSingle();
+
+// Redireciona para área correta se não for veterinário
+if (profile?.role === 'dono') {
+  return Astro.redirect('/dashboard');
+}
+if (profile?.admin === true) {
+  return Astro.redirect('/admin');
+}
+
+const vetName   = profile?.full_name ?? 'Veterinário';
+const crmv      = profile?.crmv      ?? null;
+const specialty = profile?.specialty ?? null;
+---
+
+<VetLayout title="Dashboard — Equicore Vet">
+  <VetDashboard
+    client:load
+    vetName={vetName}
+    crmv={crmv}
+    specialty={specialty}
+  />
+</VetLayout>

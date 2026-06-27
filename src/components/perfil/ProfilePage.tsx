@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { createClient } from '../../lib/supabase';
+import { maskCpfCnpj, onlyDigits, isValidCPF } from '../../lib/br';
 
 const C = {
   green: 'hsl(168 83% 29%)',
@@ -86,6 +87,7 @@ function ProfileTab({ userId, email }: { userId: string; email: string }) {
   const supabase = createClient();
 
   const [name, setName]           = useState('');
+  const [cpf, setCpf]             = useState('');
   const [phone, setPhone]         = useState('');
   const [farmName, setFarmName]   = useState('');
   const [farmCity, setFarmCity]   = useState('');
@@ -97,14 +99,25 @@ function ProfileTab({ userId, email }: { userId: string; email: string }) {
 
   useEffect(() => {
     async function load() {
-      const { data } = await supabase
+      let { data, error } = await supabase
         .from('profiles')
-        .select('full_name, phone, farm_name, farm_city, farm_state, avatar_url, plan')
+        .select('full_name, cpf, phone, farm_name, farm_city, farm_state, avatar_url, plan')
         .eq('id', userId)
         .single();
 
+      // Coluna cpf ainda não existe (migration vet_module.sql pendente)
+      if (error) {
+        const retry = await supabase
+          .from('profiles')
+          .select('full_name, phone, farm_name, farm_city, farm_state, avatar_url, plan')
+          .eq('id', userId)
+          .single();
+        data = retry.data ? { ...retry.data, cpf: null } : null;
+      }
+
       if (data) {
         setName(data.full_name ?? '');
+        setCpf(data.cpf ? maskCpfCnpj(data.cpf) : '');
         setPhone(data.phone ?? '');
         setFarmName(data.farm_name ?? '');
         setFarmCity(data.farm_city ?? '');
@@ -118,15 +131,28 @@ function ProfileTab({ userId, email }: { userId: string; email: string }) {
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
+    if (cpf && !isValidCPF(cpf)) {
+      setToast({ ok: false, msg: 'CPF inválido. Verifique os dígitos.' });
+      setTimeout(() => setToast(null), 3000);
+      return;
+    }
     setSaving(true);
-    const { error } = await supabase.from('profiles').upsert({
+    const basePayload = {
       id: userId,
       full_name: name,
       phone: phone || null,
       farm_name: farmName || null,
       farm_city: farmCity || null,
       farm_state: farmState || null,
+    };
+    let { error } = await supabase.from('profiles').upsert({
+      ...basePayload,
+      cpf: cpf ? onlyDigits(cpf) : null,
     });
+    // Coluna cpf ainda não existe (migration vet_module.sql pendente)
+    if (error && /cpf/i.test(error.message)) {
+      ({ error } = await supabase.from('profiles').upsert(basePayload));
+    }
     setSaving(false);
     if (error) {
       setToast({ ok: false, msg: 'Erro ao salvar: ' + error.message });
@@ -201,6 +227,13 @@ function ProfileTab({ userId, email }: { userId: string; email: string }) {
           <div>
             <label style={labelStyle}>Telefone</label>
             <input type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="(65) 99999-9999" style={inputStyle} />
+          </div>
+          <div>
+            <label style={labelStyle}>CPF</label>
+            <input type="text" inputMode="numeric" value={cpf} onChange={e => setCpf(maskCpfCnpj(e.target.value))} placeholder="000.000.000-00" style={inputStyle} />
+            <p style={{ fontSize: '0.75rem', color: C.muted, marginTop: 4 }}>
+              Usado para associar a você os equinos cadastrados por veterinários.
+            </p>
           </div>
         </div>
       </SectionCard>

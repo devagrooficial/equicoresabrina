@@ -1,0 +1,14 @@
+---
+export const prerender = false;
+
+import VetLayout from '../../../layouts/VetLayout.astro';
+import PropriedadeForm from '../../../components/vet/PropriedadeForm';
+
+const editId = Astro.url.searchParams.get('id');
+---
+
+<VetLayout title="Cadastro da Propriedade — Equicore Vet">
+  <main class="w-full max-w-7xl mx-auto px-4 md:px-8 py-8">
+    <PropriedadeForm client:load editId={editId} />
+  </main>
+</VetLayout>

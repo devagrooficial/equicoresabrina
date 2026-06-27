@@ -96,7 +96,59 @@ export default function LoginForm() {
       return;
     }
 
-    window.location.href = '/dashboard';
+    // Redireciona para a área correta conforme o perfil
+    if (data.user) {
+      const meta   = data.user.user_metadata ?? {};
+      let userRole = (meta.role as string) ?? 'dono';
+      let isAdmin  = false;
+
+      // Tenta ler o perfil do banco
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('id, role, admin')
+        .eq('id', data.user.id)
+        .maybeSingle();
+
+      if (profile) {
+        // Perfil existe — usa os valores do banco
+        userRole = (profile as any).role ?? userRole;
+        isAdmin  = (profile as any).admin ?? false;
+      } else {
+        // Perfil não existe (trigger estava desabilitado ou confirmação de e-mail)
+        // Cria o perfil agora a partir dos metadados salvos no signup
+        const base = {
+          id:        data.user.id,
+          full_name: meta.full_name  ?? null,
+          phone:     meta.phone      ?? null,
+          farm_name: meta.farm_name  ?? null,
+          plan:      meta.plan       ?? 'free',
+        };
+
+        // Tenta com novas colunas; se falhar usa fallback
+        const { error: upsertErr } = await supabase.from('profiles').upsert({
+          ...base,
+          email:     data.user.email ?? null,
+          role:      userRole,
+          admin:     false,
+          crmv:      meta.crmv      ?? null,
+          specialty: meta.specialty ?? null,
+        });
+
+        if (upsertErr) {
+          await supabase.from('profiles').upsert(base);
+        }
+      }
+
+      if (isAdmin) {
+        window.location.href = '/admin';
+      } else if (userRole === 'veterinario') {
+        window.location.href = '/vet';
+      } else {
+        window.location.href = '/dashboard';
+      }
+    } else {
+      window.location.href = '/dashboard';
+    }
   }
 
   const focusStyle = (field: string): React.CSSProperties => {

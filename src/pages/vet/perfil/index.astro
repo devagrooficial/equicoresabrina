@@ -1,0 +1,33 @@
+---
+export const prerender = false;
+
+import VetLayout from '../../../layouts/VetLayout.astro';
+import VetProfile from '../../../components/vet/VetProfile';
+import { createServerSupabaseClient } from '../../../lib/supabase';
+
+const responseHeaders = new Headers();
+const supabase = createServerSupabaseClient(Astro.request, responseHeaders);
+
+const { data: { session } } = await supabase.auth.getSession();
+
+const { data: profile } = session
+  ? await supabase
+      .from('profiles')
+      .select('full_name, phone, email, crmv, specialty, avatar_url, created_at')
+      .eq('id', session.user.id)
+      .single()
+  : { data: null };
+---
+
+<VetLayout title="Perfil — Equicore Vet">
+  <VetProfile
+    client:load
+    initialName={profile?.full_name ?? ''}
+    initialPhone={profile?.phone ?? ''}
+    initialEmail={profile?.email ?? session?.user?.email ?? ''}
+    initialCrmv={profile?.crmv ?? ''}
+    initialSpecialty={profile?.specialty ?? ''}
+    avatarUrl={profile?.avatar_url ?? null}
+    createdAt={profile?.created_at ?? ''}
+  />
+</VetLayout>

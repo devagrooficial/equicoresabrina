@@ -1,0 +1,12 @@
+---
+export const prerender = false;
+
+import VetLayout from '../../../layouts/VetLayout.astro';
+import VetRegistros from '../../../components/vet/VetRegistros';
+
+const initialTab = Astro.url.searchParams.get('tab');
+---
+
+<VetLayout title="Registros — Equicore Vet">
+  <VetRegistros client:load initialTab={initialTab} />
+</VetLayout>

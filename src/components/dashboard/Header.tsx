@@ -81,13 +81,16 @@ function NavLink({
   label,
   onClick,
   disabled = false,
+  currentPath,
 }: {
   href: string;
   label: string;
   onClick?: () => void;
   disabled?: boolean;
+  currentPath?: string;
 }) {
-  const isActive = typeof window !== 'undefined' && window.location.pathname === href;
+  // usa o path vindo do servidor para evitar mismatch de hidratação
+  const isActive = currentPath === href;
 
   if (disabled) {
     return (
@@ -213,6 +216,7 @@ const NAV_LINKS = [
   { href: '/dashboard', label: 'Dashboard', alwaysEnabled: true },
   { href: '/dashboard/plantel', label: 'Plantel', alwaysEnabled: false },
   { href: '/dashboard/alertas', label: 'Alertas', alwaysEnabled: false },
+  { href: '/dashboard/documentos', label: 'Documentos', alwaysEnabled: false },
   { href: '/dashboard/perfil', label: 'Perfil', alwaysEnabled: false },
 ] as const;
 
@@ -274,6 +278,7 @@ export default function Header({ currentPath }: { currentPath?: string }) {
                 key={link.href}
                 href={link.href}
                 label={link.label}
+                currentPath={currentPath}
               />
             ))}
           </nav>
@@ -313,6 +318,7 @@ export default function Header({ currentPath }: { currentPath?: string }) {
                 key={link.href}
                 href={link.href}
                 label={link.label}
+                currentPath={currentPath}
                 onClick={() => setMobileMenuOpen(false)}
               />
             ))}
