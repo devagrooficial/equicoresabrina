@@ -114,7 +114,7 @@ export default function VetRegistros({ initialTab }: { initialTab?: string | nul
     const [eq, ow, pr] = await Promise.all([
       supabase
         .from('vet_equines')
-        .select('id, name, species, breed, sex, registry_brand, chip, resenha_url, shared_with_owner, created_at, owner:vet_owners(name, cpf_cnpj), property:vet_properties(name)')
+        .select('id, name, species, breed, sex, registry_brand, chip, resenha_url, shared_with_owner, created_at, owner:vet_owners!owner_id(name, cpf_cnpj), property:vet_properties!property_id(name)')
         .order('created_at', { ascending: false }),
       supabase
         .from('vet_owners')
