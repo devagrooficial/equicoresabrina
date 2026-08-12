@@ -214,12 +214,12 @@ function ProfileTab({ userId, email }: { userId: string; email: string }) {
 
       {/* Dados pessoais */}
       <SectionCard title="Dados pessoais">
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.875rem' }}>
-          <div style={{ gridColumn: '1 / -1' }}>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+          <div className="col-span-full">
             <label style={labelStyle}>Nome completo</label>
             <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Seu nome" style={inputStyle} />
           </div>
-          <div style={{ gridColumn: '1 / -1' }}>
+          <div className="col-span-full">
             <label style={labelStyle}>E-mail</label>
             <input type="email" value={email} disabled style={{ ...inputStyle, opacity: 0.6, cursor: 'not-allowed' }} />
             <p style={{ fontSize: '0.75rem', color: C.muted, marginTop: 4 }}>Para alterar o e-mail, entre em contato com o suporte.</p>
@@ -240,8 +240,8 @@ function ProfileTab({ userId, email }: { userId: string; email: string }) {
 
       {/* Dados do haras */}
       <SectionCard title="Dados do haras / propriedade">
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.875rem' }}>
-          <div style={{ gridColumn: '1 / -1' }}>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+          <div className="col-span-full">
             <label style={labelStyle}>Nome do haras</label>
             <input type="text" value={farmName} onChange={e => setFarmName(e.target.value)} placeholder="Haras Santa Clara (opcional)" style={inputStyle} />
           </div>
@@ -318,7 +318,7 @@ function PlanoTab({ userId }: { userId: string }) {
           </a>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginTop: 20 }}>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-5">
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
               <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: C.fg }}>Equinos</span>

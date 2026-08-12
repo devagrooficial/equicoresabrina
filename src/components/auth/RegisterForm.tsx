@@ -426,8 +426,8 @@ export default function RegisterForm() {
             </p>
 
             <form onSubmit={handleStep2}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.875rem', marginBottom: '0.875rem' }}>
-                <div style={{ gridColumn: '1 / -1' }}>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 mb-3.5">
+                <div className="col-span-full">
                   <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 500, color: C.fg, marginBottom: '0.375rem' }}>Nome completo *</label>
                   <input type="text" value={fullName} onChange={e => setFullName(e.target.value)} onFocus={() => setFocused('full_name')} onBlur={() => setFocused(null)} placeholder="Seu nome completo" style={fs('full_name')} />
                   {fieldErrors.full_name && <p style={{ fontSize: '0.75rem', color: C.red, marginTop: '0.25rem' }}>{fieldErrors.full_name}</p>}
@@ -445,7 +445,7 @@ export default function RegisterForm() {
                 </div>
 
                 {role === 'dono' && (
-                  <div style={{ gridColumn: '1 / -1' }}>
+                  <div className="col-span-full">
                     <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 500, color: C.fg, marginBottom: '0.375rem' }}>Nome do haras / propriedade</label>
                     <input type="text" value={farmName} onChange={e => setFarmName(e.target.value)} onFocus={() => setFocused('farm_name')} onBlur={() => setFocused(null)} placeholder="Haras Santa Clara (opcional)" style={fs('farm_name')} />
                   </div>
@@ -467,7 +467,7 @@ export default function RegisterForm() {
                   </>
                 )}
 
-                <div style={{ gridColumn: '1 / -1' }}>
+                <div className="col-span-full">
                   <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 500, color: C.fg, marginBottom: '0.375rem' }}>Senha *</label>
                   <div style={{ position: 'relative' }}>
                     <input type={showPwd ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} onFocus={() => setFocused('password')} onBlur={() => setFocused(null)} placeholder="Mínimo 8 caracteres" style={{ ...fs('password'), paddingRight: '2.75rem' }} />
@@ -478,7 +478,7 @@ export default function RegisterForm() {
                   {fieldErrors.password && <p style={{ fontSize: '0.75rem', color: C.red, marginTop: '0.25rem' }}>{fieldErrors.password}</p>}
                 </div>
 
-                <div style={{ gridColumn: '1 / -1' }}>
+                <div className="col-span-full">
                   <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 500, color: C.fg, marginBottom: '0.375rem' }}>Confirmar senha *</label>
                   <input type="password" value={confirmPwd} onChange={e => setConfirmPwd(e.target.value)} onFocus={() => setFocused('confirm_password')} onBlur={() => setFocused(null)} placeholder="••••••••" style={fs('confirm_password')} />
                   {fieldErrors.confirm_password && <p style={{ fontSize: '0.75rem', color: C.red, marginTop: '0.25rem' }}>{fieldErrors.confirm_password}</p>}

@@ -19,8 +19,11 @@ interface EquineRow {
   resenha_url: string | null;
   shared_with_owner: boolean;
   created_at: string;
-  owner: { name: string; cpf_cnpj: string } | null;
-  property: { name: string } | null;
+  owner_id: string | null;
+  property_id: string | null;
+  // computed client-side after join
+  owner?: { name: string; cpf_cnpj: string } | null;
+  property?: { name: string } | null;
 }
 
 interface OwnerRow {
@@ -114,7 +117,7 @@ export default function VetRegistros({ initialTab }: { initialTab?: string | nul
     const [eq, ow, pr] = await Promise.all([
       supabase
         .from('vet_equines')
-        .select('id, name, species, breed, sex, registry_brand, chip, resenha_url, shared_with_owner, created_at, owner:vet_owners!owner_id(name, cpf_cnpj), property:vet_properties!property_id(name)')
+        .select('id, name, species, breed, sex, registry_brand, chip, resenha_url, shared_with_owner, created_at, owner_id, property_id')
         .order('created_at', { ascending: false }),
       supabase
         .from('vet_owners')
@@ -131,7 +134,17 @@ export default function VetRegistros({ initialTab }: { initialTab?: string | nul
       console.error('[VetRegistros] erro ao carregar:', firstError);
       setError('Não foi possível carregar os registros. Tente novamente.');
     }
-    setEquinos((eq.data as any) ?? []);
+
+    const ownerMap = new Map((ow.data ?? []).map((o: any) => [o.id, o]));
+    const propMap  = new Map((pr.data ?? []).map((p: any) => [p.id, p]));
+
+    const equinesWithJoin = ((eq.data ?? []) as any[]).map(e => ({
+      ...e,
+      owner:    ownerMap.get(e.owner_id) ?? null,
+      property: propMap.get(e.property_id) ?? null,
+    }));
+
+    setEquinos(equinesWithJoin);
     setOwners((ow.data as any) ?? []);
     setProperties((pr.data as any) ?? []);
     setLoading(false);
@@ -391,18 +404,18 @@ export default function VetRegistros({ initialTab }: { initialTab?: string | nul
       )}
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid hsl(var(--border))' }}>
+      <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid hsl(var(--border))', overflowX: 'auto', WebkitOverflowScrolling: 'touch' as any }}>
         {TABS.map(t => (
           <button key={t.key} type="button" onClick={() => switchTab(t.key)}
             style={{
-              padding: '0.625rem 1rem', fontSize: '0.875rem', fontWeight: 600,
-              background: 'none', border: 'none', cursor: 'pointer',
+              padding: '0.625rem 0.875rem', fontSize: '0.875rem', fontWeight: 600,
+              background: 'none', border: 'none', cursor: 'pointer', flexShrink: 0,
               color: tab === t.key ? VET_BLUE : 'hsl(var(--muted-foreground))',
               borderBottom: tab === t.key ? `2px solid ${VET_BLUE}` : '2px solid transparent',
               marginBottom: -1,
             }}>
             {t.label}
-            <span style={{ marginLeft: 6, fontSize: '0.6875rem', fontWeight: 700, padding: '1px 7px', borderRadius: 999, background: tab === t.key ? VET_BLUE_LIGHT : 'hsl(var(--muted))', color: tab === t.key ? VET_BLUE : 'hsl(var(--muted-foreground))' }}>
+            <span style={{ marginLeft: 5, fontSize: '0.6875rem', fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: tab === t.key ? VET_BLUE_LIGHT : 'hsl(var(--muted))', color: tab === t.key ? VET_BLUE : 'hsl(var(--muted-foreground))' }}>
               {counts[t.key]}
             </span>
           </button>
@@ -419,10 +432,10 @@ export default function VetRegistros({ initialTab }: { initialTab?: string | nul
           </select>
           registros
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: '0.8125rem', color: 'hsl(var(--muted-foreground))' }}>Procurar:</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', maxWidth: 320 }}>
+          <span style={{ fontSize: '0.8125rem', color: 'hsl(var(--muted-foreground))', flexShrink: 0 }}>Procurar:</span>
           <input type="text" value={search} onChange={e => { setSearch(e.target.value); setPage(0); }}
-                 style={{ ...inputStyle, width: 220 }} />
+                 style={{ ...inputStyle, flex: 1 }} />
         </div>
       </div>
 

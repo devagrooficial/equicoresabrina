@@ -174,8 +174,8 @@ export default function VetProfile({
         <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '1rem', padding: '1.5rem' }}>
           <h2 style={{ fontSize: '1rem', fontWeight: 700, color: C.fg, marginBottom: '1.25rem' }}>Informações Profissionais</h2>
           <form onSubmit={handleSave}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.875rem', marginBottom: '1.25rem' }}>
-              <div style={{ gridColumn: '1 / -1' }}>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 mb-5">
+              <div className="col-span-full">
                 <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 500, color: C.fg, marginBottom: '0.375rem' }}>Nome completo</label>
                 <input type="text" value={name} onChange={e => setName(e.target.value)} onFocus={() => setFocused('name')} onBlur={() => setFocused(null)} placeholder="Dr. João Silva" style={fs('name')} />
               </div>

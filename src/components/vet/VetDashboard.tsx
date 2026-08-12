@@ -18,7 +18,8 @@ interface RecentEquine {
   species: string | null;
   breed: string | null;
   created_at: string;
-  owner: { name: string; cpf_cnpj: string } | null;
+  owner_id: string | null;
+  owner?: { name: string; cpf_cnpj: string } | null;
 }
 
 function getGreeting() {
@@ -80,14 +81,15 @@ export default function VetDashboard({ vetName, crmv, specialty }: VetDashboardP
     (async () => {
       const sb = createClient();
 
-      const [eq, ow, pr, recent] = await Promise.all([
+      const [eq, ow, pr, recent, recentOwners] = await Promise.all([
         sb.from('vet_equines').select('id', { count: 'exact', head: true }),
         sb.from('vet_owners').select('id', { count: 'exact', head: true }),
         sb.from('vet_properties').select('id', { count: 'exact', head: true }),
         sb.from('vet_equines')
-          .select('id, name, species, breed, created_at, owner:vet_owners(name, cpf_cnpj)')
+          .select('id, name, species, breed, created_at, owner_id')
           .order('created_at', { ascending: false })
           .limit(5),
+        sb.from('vet_owners').select('id, name, cpf_cnpj'),
       ]);
 
       // Tabelas ainda não criadas no Supabase → orienta rodar a migration
@@ -103,7 +105,13 @@ export default function VetDashboard({ vetName, crmv, specialty }: VetDashboardP
         proprietarios: ow.count ?? 0,
         propriedades:  pr.count ?? 0,
       });
-      setRecents((recent.data as any) ?? []);
+
+      const ownerMap = new Map((recentOwners.data ?? []).map((o: any) => [o.id, o]));
+      const recentsWithOwner = ((recent.data ?? []) as any[]).map(e => ({
+        ...e,
+        owner: ownerMap.get(e.owner_id) ?? null,
+      }));
+      setRecents(recentsWithOwner);
       setLoading(false);
     })();
   }, []);
