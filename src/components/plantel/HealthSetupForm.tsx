@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { createClient } from '../../lib/supabase';
+import { createClient, resolveDocUrl } from '../../lib/supabase';
 import { addMonths } from '../../lib/alertStatus';
 
 function isImageName(name: string | null): boolean {
@@ -9,6 +9,7 @@ function isImageName(name: string | null): boolean {
 // Miniatura do anexo: arquivo recém-selecionado ou anexo já salvo
 function AttachmentPreview({ file, existingUrl, existingName }: { file: File | null; existingUrl: string | null; existingName: string | null }) {
   const [objUrl, setObjUrl] = useState<string | null>(null);
+  const [signedUrl, setSignedUrl] = useState<string | null>(null);
 
   useEffect(() => {
     if (file && file.type.startsWith('image/')) {
@@ -18,6 +19,14 @@ function AttachmentPreview({ file, existingUrl, existingName }: { file: File | n
     }
     setObjUrl(null);
   }, [file]);
+
+  useEffect(() => {
+    if (!file && existingUrl) {
+      resolveDocUrl(existingUrl).then(setSignedUrl);
+    } else {
+      setSignedUrl(null);
+    }
+  }, [file, existingUrl]);
 
   const Cm = { green: 'hsl(168 83% 29%)', muted: 'hsl(var(--muted-foreground))', border: 'hsl(var(--border))', red: 'hsl(0 84.2% 55%)', redLight: 'hsl(0 84.2% 55% / 0.1)' };
 
@@ -40,9 +49,9 @@ function AttachmentPreview({ file, existingUrl, existingName }: { file: File | n
   if (existingUrl) {
     const isImg = isImageName(existingName) || isImageName(existingUrl);
     return (
-      <a href={existingUrl} target="_blank" rel="noopener" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, textDecoration: 'none' }}>
-        {isImg ? (
-          <img src={existingUrl} alt={existingName || 'Documento'} style={{ width: 48, height: 48, objectFit: 'cover', borderRadius: 8, border: `1px solid ${Cm.border}` }} />
+      <a href={signedUrl ?? '#'} target="_blank" rel="noopener" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, textDecoration: 'none' }}>
+        {isImg && signedUrl ? (
+          <img src={signedUrl} alt={existingName || 'Documento'} style={{ width: 48, height: 48, objectFit: 'cover', borderRadius: 8, border: `1px solid ${Cm.border}` }} />
         ) : (
           <span style={{ width: 48, height: 48, borderRadius: 8, border: `1px solid ${Cm.border}`, background: Cm.redLight, display: 'flex', alignItems: 'center', justifyContent: 'center', color: Cm.red, fontSize: 10, fontWeight: 700 }}>PDF</span>
         )}
@@ -114,14 +123,14 @@ export default function HealthSetupForm({ equineId, equineName, alerts }: { equi
     setState((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
   }
 
-  // Faz upload do arquivo para o bucket "docs" e retorna a URL pública
-  async function uploadAttachment(alertId: string, file: File): Promise<{ url: string; name: string }> {
+  // Faz upload do arquivo para o bucket "docs" (path escopado pelo uid do usuário,
+  // exigido pela RLS de storage) e retorna o storage path relativo.
+  async function uploadAttachment(userId: string, alertId: string, file: File): Promise<{ path: string; name: string }> {
     const ext = file.name.split('.').pop() ?? 'bin';
-    const path = `${equineId}/${alertId}-${Date.now()}.${ext}`;
+    const path = `${userId}/equinos/${equineId}/${alertId}-${Date.now()}.${ext}`;
     const { error: upErr } = await supabase.storage.from('docs').upload(path, file, { upsert: true });
     if (upErr) throw upErr;
-    const { data } = supabase.storage.from('docs').getPublicUrl(path);
-    return { url: data.publicUrl, name: file.name };
+    return { path, name: file.name };
   }
 
   async function handleSave() {
@@ -129,6 +138,9 @@ export default function HealthSetupForm({ equineId, equineName, alerts }: { equi
     setError(null);
 
     try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Usuário não autenticado.');
+
       await Promise.all(alerts.map(async (a) => {
         const s = state[a.id];
         const isPermanent = !a.periodicity_months;
@@ -136,8 +148,8 @@ export default function HealthSetupForm({ equineId, equineName, alerts }: { equi
         // Upload do anexo (se houver) — vale para qualquer item
         let attachment: { attachment_url: string; attachment_name: string } | {} = {};
         if (s.file) {
-          const up = await uploadAttachment(a.id, s.file);
-          attachment = { attachment_url: up.url, attachment_name: up.name };
+          const up = await uploadAttachment(user.id, a.id, s.file);
+          attachment = { attachment_url: up.path, attachment_name: up.name };
         }
 
         let payload: Record<string, any>;

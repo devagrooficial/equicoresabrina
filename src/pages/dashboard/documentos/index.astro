@@ -24,8 +24,29 @@ const { data: vetDocsRaw } = await supabase
   .select('id, name, resenha_url, created_at')
   .not('resenha_url', 'is', null);
 
-const docs    = alertDocs ?? [];
-const vetDocs = vetDocsRaw ?? [];
+// Resolve um path de storage ou URL legada (pública) para uma URL assinada.
+// Bucket "docs" é privado — links diretos não funcionam sem assinatura.
+async function toSignedUrl(pathOrUrl: string | null): Promise<string | null> {
+  if (!pathOrUrl) return null;
+  let storagePath = pathOrUrl;
+  if (pathOrUrl.startsWith('http')) {
+    const marker = '/object/public/docs/';
+    const idx = pathOrUrl.indexOf(marker);
+    if (idx === -1) return pathOrUrl;
+    storagePath = decodeURIComponent(pathOrUrl.slice(idx + marker.length));
+  }
+  const { data } = await supabase.storage.from('docs').createSignedUrl(storagePath, 43_200);
+  return data?.signedUrl ?? null;
+}
+
+const docs = await Promise.all((alertDocs ?? []).map(async (d: any) => ({
+  ...d,
+  signed_url: await toSignedUrl(d.attachment_url),
+})));
+const vetDocs = await Promise.all((vetDocsRaw ?? []).map(async (d: any) => ({
+  ...d,
+  signed_resenha_url: await toSignedUrl(d.resenha_url),
+})));
 
 const GREEN = 'hsl(168 83% 29%)';
 
@@ -94,7 +115,7 @@ function fmtDate(d: string | null) {
                     {fmtDate(d.last_done_at) ? ` · realizado em ${fmtDate(d.last_done_at)}` : ''}
                   </p>
                 </div>
-                <a href={d.attachment_url} target="_blank" rel="noopener"
+                <a href={d.signed_url ?? '#'} target="_blank" rel="noopener"
                    class="text-xs font-semibold px-3 py-1.5 rounded-lg flex-shrink-0"
                    style={`background: hsl(168 83% 29% / 0.08); color: ${GREEN}; text-decoration: none;`}>
                   Abrir ↗
@@ -126,7 +147,7 @@ function fmtDate(d: string | null) {
                     <p class="text-sm font-semibold text-foreground truncate">Resenha — {d.name}</p>
                     <p class="text-xs text-muted-foreground">{fmtDate(d.created_at?.slice(0, 10)) ?? ''}</p>
                   </div>
-                  <a href={d.resenha_url} target="_blank" rel="noopener"
+                  <a href={d.signed_resenha_url ?? '#'} target="_blank" rel="noopener"
                      class="text-xs font-semibold px-3 py-1.5 rounded-lg flex-shrink-0"
                      style="background: hsl(221 83% 53% / 0.08); color: hsl(221 83% 53%); text-decoration: none;">
                     Abrir ↗

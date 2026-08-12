@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { createClient } from '../../lib/supabase';
+import { useState, useEffect } from 'react';
+import { createClient, resolveDocUrl } from '../../lib/supabase';
 import { calculateAlertStatus, type AlertStatusKey } from '../../lib/alertStatus';
 type Tab = 'overview' | 'health' | 'documents';
 
@@ -23,16 +23,22 @@ function isImageFile(name: string | null, url: string | null): boolean {
 }
 
 function AttachmentLink({ alert }: { alert: EquineAlert }) {
+  const [signedUrl, setSignedUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (alert.attachmentUrl) resolveDocUrl(alert.attachmentUrl).then(setSignedUrl);
+  }, [alert.attachmentUrl]);
+
   if (!alert.attachmentUrl) return null;
   const isImage = isImageFile(alert.attachmentName, alert.attachmentUrl);
 
   return (
     <div style={{ marginTop: 8 }}>
-      <a href={alert.attachmentUrl} target="_blank" rel="noopener"
+      <a href={signedUrl ?? '#'} target="_blank" rel="noopener"
         style={{ display: 'inline-flex', alignItems: 'flex-start', gap: 8, textDecoration: 'none' }}>
-        {isImage ? (
+        {isImage && signedUrl ? (
           <img
-            src={alert.attachmentUrl}
+            src={signedUrl}
             alt={alert.attachmentName || 'Documento'}
             style={{ width: 56, height: 56, objectFit: 'cover', borderRadius: 8, border: `1px solid ${C.border}`, flexShrink: 0 }}
           />
