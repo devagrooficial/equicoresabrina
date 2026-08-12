@@ -141,6 +141,14 @@ export default function RegisterForm() {
   const [fullName, setFullName]     = useState('');
   const [email, setEmail]           = useState('');
   const [phone, setPhone]           = useState('');
+
+  const formatPhone = (value: string) => {
+    const digits = value.replace(/\D/g, '').slice(0, 11);
+    if (digits.length <= 2) return digits.length ? `(${digits}` : '';
+    if (digits.length <= 6) return `(${digits.slice(0,2)}) ${digits.slice(2)}`;
+    if (digits.length <= 10) return `(${digits.slice(0,2)}) ${digits.slice(2,6)}-${digits.slice(6)}`;
+    return `(${digits.slice(0,2)}) ${digits.slice(2,7)}-${digits.slice(7)}`;
+  };
   const [farmName, setFarmName]     = useState('');
   const [crmv, setCrmv]             = useState('');
   const [specialty, setSpecialty]   = useState('');
@@ -433,7 +441,7 @@ export default function RegisterForm() {
 
                 <div>
                   <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 500, color: C.fg, marginBottom: '0.375rem' }}>Telefone</label>
-                  <input type="tel" value={phone} onChange={e => setPhone(e.target.value)} onFocus={() => setFocused('phone')} onBlur={() => setFocused(null)} placeholder="(65) 99999-9999" style={fs('phone')} />
+                  <input type="tel" value={phone} onChange={e => setPhone(formatPhone(e.target.value))} onFocus={() => setFocused('phone')} onBlur={() => setFocused(null)} placeholder="(65) 99999-9999" style={fs('phone')} />
                 </div>
 
                 {role === 'dono' && (
