@@ -53,6 +53,9 @@ const FILTERS: { key: Filter; label: string }[] = [
 // Buckets que exigem atenção (entram em "Todos")
 const ACTIVE_BUCKETS: Bucket[] = ['vencida', 'critico', 'urgente', 'atencao', 'pendente'];
 
+// Exames/vacinas mais críticos — ganham card de destaque próprio, separado da lista geral
+const HIGHLIGHT_NAMES = ['Exame de AIE', 'Exame de Mormo', 'Vacina de Influenza'];
+
 // Classifica um alerta pelo status REAL (derivado da data), não por resolved_at
 function bucketOf(a: AlertRow): Bucket {
   if (a.notOwned) return 'naoaplica';
@@ -201,24 +204,28 @@ export default function AlertasPage() {
       });
   }, []);
 
+  // Itens de destaque (AIE, Mormo, Influenza) ganham card próprio; saem da lista/contadores gerais
+  const highlightAlerts = useMemo(() => alerts.filter(a => HIGHLIGHT_NAMES.includes(a.title)), [alerts]);
+  const otherAlerts     = useMemo(() => alerts.filter(a => !HIGHLIGHT_NAMES.includes(a.title)), [alerts]);
+
   // Classifica cada alerta pelo status REAL
-  const buckets = useMemo(() => new Map(alerts.map(a => [a.id, bucketOf(a)])), [alerts]);
+  const buckets = useMemo(() => new Map(otherAlerts.map(a => [a.id, bucketOf(a)])), [otherAlerts]);
 
   const counts = useMemo(() => {
     const c = { all: 0, vencida: 0, critico: 0, urgente: 0, atencao: 0, pendente: 0, emdia: 0 };
-    alerts.forEach(a => {
+    otherAlerts.forEach(a => {
       const b = buckets.get(a.id)!;
       if (b === 'naoaplica') return;
       (c as any)[b]++;
       if (ACTIVE_BUCKETS.includes(b)) c.all++;
     });
     return c;
-  }, [alerts, buckets]);
+  }, [otherAlerts, buckets]);
 
   const filtered = useMemo(() => {
-    if (filter === 'all') return alerts.filter(a => ACTIVE_BUCKETS.includes(buckets.get(a.id)!));
-    return alerts.filter(a => buckets.get(a.id) === filter);
-  }, [filter, alerts, buckets]);
+    if (filter === 'all') return otherAlerts.filter(a => ACTIVE_BUCKETS.includes(buckets.get(a.id)!));
+    return otherAlerts.filter(a => buckets.get(a.id) === filter);
+  }, [filter, otherAlerts, buckets]);
 
   async function handleAction(id: string, action: 'resolve' | 'dismiss') {
     // "Não se aplica" → marca NAO_POSSUI; "resolve" (permanente pendente) → marca possui
@@ -251,6 +258,26 @@ export default function AlertasPage() {
           {loading ? 'Carregando…' : `${counts.all} alertas ativos · ${counts.vencida} vencidas · ${counts.critico} críticos`}
         </p>
       </div>
+
+      {/* Card de destaque — exames mais críticos (AIE, Mormo, Influenza) */}
+      {!loading && highlightAlerts.length > 0 && (
+        <div style={{
+          marginBottom: '1.5rem', padding: '1.125rem', borderRadius: '1rem',
+          background: C.redLight, border: `1.5px solid ${C.red}55`,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <span style={{ width: 8, height: 8, borderRadius: '50%', background: C.red }} />
+            <p style={{ fontSize: '0.8125rem', fontWeight: 800, color: C.redText, letterSpacing: '0.02em' }}>
+              Exames Críticos — AIE, Mormo e Influenza
+            </p>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {highlightAlerts.map(alert => (
+              <AlertCard key={alert.id} alert={alert} bucket={bucketOf(alert)} onAction={handleAction} />
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Summary cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: 10, marginBottom: '1.5rem' }}>

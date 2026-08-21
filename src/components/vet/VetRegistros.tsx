@@ -2,6 +2,11 @@ import { useState, useEffect, useMemo } from 'react';
 import { createClient, resolveDocUrl } from '../../lib/supabase';
 import { maskCpfCnpj } from '../../lib/br';
 import { VET_BLUE, VET_BLUE_LIGHT, inputStyle } from './formUI';
+import { Lightbox, useLightbox } from '../shared/Lightbox';
+
+function isImagePath(path: string): boolean {
+  return /\.(png|jpe?g|gif|webp|avif|bmp|heic|heif)$/i.test(path.split('?')[0]);
+}
 
 // Listagem central da área veterinária: Equinos, Proprietários e Propriedades.
 // Mostra apenas os registros do próprio veterinário (RLS).
@@ -108,6 +113,7 @@ export default function VetRegistros({ initialTab }: { initialTab?: string | nul
   const [search, setSearch]         = useState('');
   const [pageSize, setPageSize]     = useState(10);
   const [page, setPage]             = useState(0);
+  const lightbox                    = useLightbox();
 
   const supabase = createClient();
 
@@ -176,7 +182,12 @@ export default function VetRegistros({ initialTab }: { initialTab?: string | nul
   async function openResenha(resenhaUrl: string) {
     try {
       const signedUrl = await resolveDocUrl(resenhaUrl);
-      window.open(signedUrl, '_blank', 'noopener,noreferrer');
+      // Imagens abrem com zoom in-app; PDFs abrem em nova aba (não são "ampliáveis")
+      if (isImagePath(resenhaUrl)) {
+        lightbox.open(signedUrl);
+      } else {
+        window.open(signedUrl, '_blank', 'noopener,noreferrer');
+      }
     } catch {
       alert('Não foi possível abrir a resenha. Tente novamente.');
     }
@@ -463,6 +474,8 @@ export default function VetRegistros({ initialTab }: { initialTab?: string | nul
           </div>
         </div>
       )}
+
+      <Lightbox src={lightbox.src} onClose={lightbox.close} />
     </main>
   );
 }

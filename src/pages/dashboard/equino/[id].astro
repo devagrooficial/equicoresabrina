@@ -63,6 +63,7 @@ const equineData = {
   age: calcAge(row.birth_date, row.estimated_age),
   registration: reg,
   healthStatus: row.health_status ?? 'healthy',
+  coverPhotoUrl: row.cover_photo_url ?? null,
   feedKgDay: row.feed_kg_day,
   feedBrand: row.feed_brand,
   hayKgDay: row.hay_kg_day,

@@ -1,17 +1,23 @@
 import { useRef, useState, useEffect } from 'react';
-import { VET_BLUE } from './formUI';
+import { ZoomButton } from './Lightbox';
 
-// Fotos do animal em 4 posições obrigatórias + importação de resenha (PDF/imagem).
-// Os arquivos são salvos no bucket "docs" em {vetId}/equinos/{equineId}/.
+// Fotos do animal em 4 posições obrigatórias + marca de fogo (slot separado,
+// opcional por chamador) + importação de resenha (PDF/imagem).
+// Compartilhado entre o cadastro do veterinário e o cadastro do dono.
+// Arquivos salvos no bucket "docs" em {uid}/equinos/{equineId}/.
 
 export const PHOTO_SLOTS = [
-  { key: 'lateral-esquerda', label: 'Lateral Esquerda' },
-  { key: 'lateral-direita',  label: 'Lateral Direita'  },
-  { key: 'frente',           label: 'Frente'           },
-  { key: 'verso',            label: 'Verso'            },
+  { key: 'frente',            label: 'Frente'           },
+  { key: 'costas',            label: 'Costas'           },
+  { key: 'lateral-esquerda',  label: 'Lateral Esquerda' },
+  { key: 'lateral-direita',   label: 'Lateral Direita'  },
 ] as const;
 
-export type PhotoKey = (typeof PHOTO_SLOTS)[number]['key'];
+export const MARCA_FOGO_SLOT = { key: 'marca-fogo', label: 'Marca de Fogo' } as const;
+
+export const ALL_SLOTS = [...PHOTO_SLOTS, MARCA_FOGO_SLOT];
+
+export type PhotoKey = (typeof ALL_SLOTS)[number]['key'];
 
 export interface PhotoSlotState {
   file:         File | null;        // novo arquivo selecionado
@@ -23,16 +29,17 @@ export type PhotosState = Record<PhotoKey, PhotoSlotState>;
 
 export function emptyPhotosState(): PhotosState {
   return {
-    'lateral-esquerda': { file: null, existingUrl: null, storagePath: null },
-    'lateral-direita':  { file: null, existingUrl: null, storagePath: null },
     'frente':           { file: null, existingUrl: null, storagePath: null },
-    'verso':            { file: null, existingUrl: null, storagePath: null },
+    'costas':           { file: null, existingUrl: null, storagePath: null },
+    'lateral-esquerda':  { file: null, existingUrl: null, storagePath: null },
+    'lateral-direita':   { file: null, existingUrl: null, storagePath: null },
+    'marca-fogo':        { file: null, existingUrl: null, storagePath: null },
   };
 }
 
-/** Posições ainda sem foto (nem nova, nem existente) */
-export function missingPhotos(photos: PhotosState): string[] {
-  return PHOTO_SLOTS
+/** Posições ainda sem foto (nem nova, nem existente), dentro do conjunto de slots informado. */
+export function missingPhotos(photos: PhotosState, slots: readonly { key: PhotoKey; label: string }[] = PHOTO_SLOTS): string[] {
+  return slots
     .filter(s => !photos[s.key].file && !photos[s.key].existingUrl)
     .map(s => s.label);
 }
@@ -71,12 +78,14 @@ function CameraIcon() {
 
 // ─── Slot de foto ─────────────────────────────────────────────────────────────
 
-function PhotoSlot({ label, state, error: slotError, onSelect, onClear }: {
+function PhotoSlot({ label, state, error: slotError, accent, onSelect, onClear, onZoom }: {
   label: string;
   state: PhotoSlotState;
   error: boolean;
+  accent: string;
   onSelect: (file: File) => void;
   onClear: () => void;
+  onZoom: (url: string) => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [preview, setPreview]       = useState<string | null>(null);
@@ -110,14 +119,15 @@ function PhotoSlot({ label, state, error: slotError, onSelect, onClear }: {
         style={{
           position: 'relative', borderRadius: '0.75rem', overflow: 'hidden', cursor: 'pointer',
           aspectRatio: '4 / 3',
-          border: `2px dashed ${(slotError || fileError) ? 'hsl(0 84.2% 55%)' : hasPhoto ? 'hsl(var(--border))' : 'hsl(221 83% 53% / 0.4)'}`,
-          background: hasPhoto ? '#000' : 'hsl(221 83% 53% / 0.04)',
+          border: `2px dashed ${(slotError || fileError) ? 'hsl(0 84.2% 55%)' : hasPhoto ? 'hsl(var(--border))' : accent.replace(')', ' / 0.4)')}`,
+          background: hasPhoto ? '#000' : accent.replace(')', ' / 0.04)'),
           display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}
       >
         {hasPhoto ? (
           <>
             <img src={preview!} alt={`Foto ${label}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            <ZoomButton onClick={() => onZoom(preview!)} />
             <div style={{
               position: 'absolute', inset: 0, display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
               background: 'linear-gradient(transparent 60%, rgba(0,0,0,0.55))', padding: '0.5rem', gap: 8,
@@ -133,7 +143,7 @@ function PhotoSlot({ label, state, error: slotError, onSelect, onClear }: {
             </div>
           </>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, color: VET_BLUE }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, color: accent }}>
             <CameraIcon />
             <span style={{ fontSize: '0.75rem', fontWeight: 600 }}>Enviar foto</span>
           </div>
@@ -160,12 +170,14 @@ function PhotoSlot({ label, state, error: slotError, onSelect, onClear }: {
   );
 }
 
-// ─── Grid de fotos ────────────────────────────────────────────────────────────
+// ─── Grid de fotos (4 posições) ────────────────────────────────────────────────
 
-export function EquinePhotosGrid({ photos, errorKeys, onChange }: {
+export function EquinePhotosGrid({ photos, errorKeys, accent = 'hsl(221 83% 53%)', onChange, onZoom }: {
   photos: PhotosState;
   errorKeys: PhotoKey[];
+  accent?: string;
   onChange: (key: PhotoKey, slot: PhotoSlotState) => void;
+  onZoom?: (url: string) => void;
 }) {
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -175,10 +187,44 @@ export function EquinePhotosGrid({ photos, errorKeys, onChange }: {
           label={s.label}
           state={photos[s.key]}
           error={errorKeys.includes(s.key)}
+          accent={accent}
           onSelect={file => onChange(s.key, { ...photos[s.key], file })}
           onClear={() => onChange(s.key, { file: null, existingUrl: null, storagePath: null })}
+          onZoom={onZoom ?? (() => {})}
         />
       ))}
+    </div>
+  );
+}
+
+// ─── Marca de fogo — upload dedicado, em bloco separado ────────────────────────
+
+export function MarcaFogoUpload({ state, error, accent = 'hsl(221 83% 53%)', onChange, onZoom }: {
+  state: PhotoSlotState;
+  error: boolean;
+  accent?: string;
+  onChange: (slot: PhotoSlotState) => void;
+  onZoom?: (url: string) => void;
+}) {
+  return (
+    <div>
+      <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'hsl(var(--foreground))', marginBottom: '0.25rem' }}>
+        Marca de Fogo *
+      </label>
+      <p style={{ fontSize: '0.75rem', color: 'hsl(var(--muted-foreground))', marginBottom: '0.75rem' }}>
+        Fotografe a marca de fogo do proprietário com boa iluminação e foco nítido, sem reflexos, para garantir a legibilidade dos símbolos.
+      </p>
+      <div style={{ maxWidth: 280 }}>
+        <PhotoSlot
+          label={MARCA_FOGO_SLOT.label}
+          state={state}
+          error={error}
+          accent={accent}
+          onSelect={file => onChange({ ...state, file })}
+          onClear={() => onChange({ file: null, existingUrl: null, storagePath: null })}
+          onZoom={onZoom ?? (() => {})}
+        />
+      </div>
     </div>
   );
 }
@@ -207,7 +253,7 @@ export function ResenhaFileUpload({ file, existingUrl, onSelect, onClear, onErro
       background: 'hsl(var(--muted) / 0.3)', padding: '1rem',
       display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12,
     }}>
-      <div style={{ width: 40, height: 40, borderRadius: 10, background: 'hsl(221 83% 53% / 0.1)', color: VET_BLUE, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+      <div style={{ width: 40, height: 40, borderRadius: 10, background: 'hsl(221 83% 53% / 0.1)', color: 'hsl(221 83% 53%)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/>
         </svg>
@@ -230,7 +276,7 @@ export function ResenhaFileUpload({ file, existingUrl, onSelect, onClear, onErro
           </button>
         )}
         <button type="button" onClick={() => inputRef.current?.click()}
-                style={{ padding: '0.5rem 1rem', borderRadius: '0.625rem', background: VET_BLUE, color: '#fff', fontWeight: 600, fontSize: '0.8125rem', border: 'none', cursor: 'pointer' }}>
+                style={{ padding: '0.5rem 1rem', borderRadius: '0.625rem', background: 'hsl(221 83% 53%)', color: '#fff', fontWeight: 600, fontSize: '0.8125rem', border: 'none', cursor: 'pointer' }}>
           {current ? 'Trocar arquivo' : 'Selecionar arquivo'}
         </button>
       </div>

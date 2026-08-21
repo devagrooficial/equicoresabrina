@@ -105,6 +105,7 @@ function LogoutButton() {
 const NAV_LINKS = [
   { href: '/vet',           label: 'Dashboard' },
   { href: '/vet/registros', label: 'Registros' },
+  { href: '/vet/vinculos',  label: 'Vínculos'  },
   { href: '/vet/perfil',    label: 'Perfil'    },
 ] as const;
 
@@ -199,6 +200,7 @@ export default function VetHeader({ currentPath }: { currentPath?: string }) {
             <NavLink href="/vet" label="Dashboard" currentPath={currentPath} />
             <CadastrosDropdown currentPath={currentPath} />
             <NavLink href="/vet/registros" label="Registros" currentPath={currentPath} />
+            <NavLink href="/vet/vinculos" label="Vínculos" currentPath={currentPath} />
             <NavLink href="/vet/perfil" label="Perfil" currentPath={currentPath} />
           </nav>
 

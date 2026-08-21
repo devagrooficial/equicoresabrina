@@ -6,10 +6,11 @@ import { ESPECIES, RACAS, PELAGENS, SEXOS } from '../../lib/vetCatalogs';
 import { Field, Banner, SubmitButton, FormCard, inputStyle, VET_BLUE } from './formUI';
 import ResenhaCanvas, { type ResenhaCanvasHandle } from './ResenhaCanvas';
 import {
-  EquinePhotosGrid, ResenhaFileUpload, PHOTO_SLOTS, emptyPhotosState, missingPhotos,
-  validateResenhaFile,
+  EquinePhotosGrid, MarcaFogoUpload, ResenhaFileUpload, PHOTO_SLOTS, MARCA_FOGO_SLOT,
+  emptyPhotosState, missingPhotos, validateResenhaFile,
   type PhotosState, type PhotoKey, type PhotoSlotState,
-} from './EquinePhotos';
+} from '../shared/EquinePhotos';
+import { Lightbox, useLightbox } from '../shared/Lightbox';
 
 const schema = z.object({
   name:      z.string().min(2, 'Informe o nome do animal'),
@@ -33,7 +34,6 @@ export default function EquinoVetForm({ editId = null }: Props) {
   const [ownerId, setOwnerId]               = useState('');
   const [propertyId, setPropertyId]         = useState('');
   const [registryBrand, setRegistryBrand]   = useState('');
-  const [chip, setChip]                     = useState('');
   const [species, setSpecies]               = useState('');
   const [breed, setBreed]                   = useState('');
   const [coat, setCoat]                     = useState('');
@@ -63,6 +63,7 @@ export default function EquinoVetForm({ editId = null }: Props) {
 
   const supabase   = createClient();
   const resenhaRef = useRef<ResenhaCanvasHandle>(null);
+  const lightbox    = useLightbox();
 
   // Valida editId antes de qualquer query
   const safeEditId = editId && isValidUUID(editId) ? editId : null;
@@ -94,7 +95,6 @@ export default function EquinoVetForm({ editId = null }: Props) {
           setOwnerId(data.owner_id ?? '');
           setPropertyId(data.property_id ?? '');
           setRegistryBrand(data.registry_brand ?? '');
-          setChip(data.chip ?? '');
           setSpecies(data.species ?? '');
           setBreed(data.breed ?? '');
           setCoat(data.coat ?? '');
@@ -122,9 +122,13 @@ export default function EquinoVetForm({ editId = null }: Props) {
             const newFiles    = newFolder.data ?? [];
             const legacyFiles = legacyFolder.data ?? [];
 
-            for (const slot of PHOTO_SLOTS) {
+            // "Costas" foi renomeado de "Verso" — aceita o prefixo antigo em cadastros existentes
+            const prefixesFor = (key: string) => key === 'costas' ? [`foto-${key}`, 'foto-verso'] : [`foto-${key}`];
+
+            for (const slot of [...PHOTO_SLOTS, MARCA_FOGO_SLOT]) {
+              const prefixes = prefixesFor(slot.key);
               // Busca no novo path
-              const newFile = newFiles.find(x => x.name.startsWith(`foto-${slot.key}`));
+              const newFile = newFiles.find(x => prefixes.some(p => x.name.startsWith(p)));
               if (newFile) {
                 const fullPath  = `${user.id}/equinos/${safeEditId}/${newFile.name}`;
                 const signedUrl = await resolveDocUrl(fullPath);
@@ -132,7 +136,7 @@ export default function EquinoVetForm({ editId = null }: Props) {
                 continue;
               }
               // Fallback: legado
-              const legacyFile = legacyFiles.find(x => x.name.startsWith(`foto-${slot.key}`));
+              const legacyFile = legacyFiles.find(x => prefixes.some(p => x.name.startsWith(p)));
               if (legacyFile) {
                 const fullPath  = `equinos/${safeEditId}/${legacyFile.name}`;
                 const signedUrl = await resolveDocUrl(fullPath);
@@ -238,10 +242,11 @@ export default function EquinoVetForm({ editId = null }: Props) {
       return;
     }
 
-    const missing = missingPhotos(photos);
-    if (missing.length > 0) {
-      setPhotoErrorKeys(PHOTO_SLOTS.filter(s => !photos[s.key].file && !photos[s.key].existingUrl).map(s => s.key));
-      setError(`Envie as fotos obrigatórias do animal: ${missing.join(', ')}.`);
+    const missing         = missingPhotos(photos);
+    const missingMarcaFogo = missingPhotos(photos, [MARCA_FOGO_SLOT]);
+    if (missing.length > 0 || missingMarcaFogo.length > 0) {
+      setPhotoErrorKeys([...PHOTO_SLOTS, MARCA_FOGO_SLOT].filter(s => !photos[s.key].file && !photos[s.key].existingUrl).map(s => s.key));
+      setError(`Envie as fotos obrigatórias do animal: ${[...missing, ...missingMarcaFogo].join(', ')}.`);
       return;
     }
 
@@ -272,7 +277,7 @@ export default function EquinoVetForm({ editId = null }: Props) {
 
     try {
       // Coleta todos os paths existentes (para remoção ao substituir)
-      const allExistingPaths = PHOTO_SLOTS.flatMap(s =>
+      const allExistingPaths = [...PHOTO_SLOTS, MARCA_FOGO_SLOT].flatMap(s =>
         photos[s.key].storagePath ? [photos[s.key].storagePath!] : []
       );
 
@@ -286,6 +291,17 @@ export default function EquinoVetForm({ editId = null }: Props) {
           );
           uploadedPaths.push(path);
         }
+      }
+
+      // Marca de fogo — armazenada em coluna própria
+      let marcaFogoPath = photos['marca-fogo'].storagePath;
+      const marcaFogoFile = photos['marca-fogo'].file;
+      if (marcaFogoFile) {
+        marcaFogoPath = await uploadEquineFile(
+          currentVetId, equineId, 'foto-marca-fogo', marcaFogoFile,
+          marcaFogoFile.type || 'image/jpeg', fileExt(marcaFogoFile, 'jpg'), allExistingPaths,
+        );
+        uploadedPaths.push(marcaFogoPath);
       }
 
       // Resenha: arquivo importado > desenho novo > manter salva
@@ -314,7 +330,7 @@ export default function EquinoVetForm({ editId = null }: Props) {
         property_id:    propertyId || null,
         name:           name.trim(),
         registry_brand: registryBrand.trim() || null,
-        chip:           chip.trim() || null,
+        marca_fogo_url: marcaFogoPath,
         species:        species || null,
         breed:          breed || null,
         coat:           coat || null,
@@ -418,12 +434,8 @@ export default function EquinoVetForm({ editId = null }: Props) {
             </select>
           </Field>
 
-          <Field label="Registro/Marca" className="md:col-span-2">
+          <Field label="Registro/Marca" className="md:col-span-4">
             <input type="text" value={registryBrand} onChange={e => setRegistryBrand(e.target.value)} style={inputStyle} />
-          </Field>
-
-          <Field label="Nº. Chip" className="md:col-span-2">
-            <input type="text" value={chip} onChange={e => setChip(e.target.value)} style={inputStyle} />
           </Field>
 
           <Field label="Propriedade" hint="opcional" className="md:col-span-4">
@@ -496,15 +508,31 @@ export default function EquinoVetForm({ editId = null }: Props) {
             Fotos do Animal *
           </label>
           <p style={{ fontSize: '0.75rem', color: 'hsl(var(--muted-foreground))', marginBottom: '0.75rem' }}>
-            Envie as 4 fotos: lateral esquerda, lateral direita, frente e verso. Máximo 10 MB por foto (JPEG, PNG ou WebP).
+            Envie as 4 fotos: frente, costas, lateral esquerda e lateral direita. Máximo 10 MB por foto (JPEG, PNG ou WebP).
           </p>
           <EquinePhotosGrid
             photos={photos}
             errorKeys={photoErrorKeys}
+            accent={VET_BLUE}
             onChange={(key: PhotoKey, slot: PhotoSlotState) => {
               setPhotos(prev => ({ ...prev, [key]: slot }));
               setPhotoErrorKeys(prev => prev.filter(k => k !== key));
             }}
+            onZoom={lightbox.open}
+          />
+        </div>
+
+        {/* Marca de fogo — upload dedicado */}
+        <div style={{ marginTop: '2rem' }}>
+          <MarcaFogoUpload
+            state={photos['marca-fogo']}
+            error={photoErrorKeys.includes('marca-fogo')}
+            accent={VET_BLUE}
+            onChange={slot => {
+              setPhotos(prev => ({ ...prev, 'marca-fogo': slot }));
+              setPhotoErrorKeys(prev => prev.filter(k => k !== 'marca-fogo'));
+            }}
+            onZoom={lightbox.open}
           />
         </div>
 
@@ -521,6 +549,8 @@ export default function EquinoVetForm({ editId = null }: Props) {
 
         <SubmitButton loading={loading} />
       </form>
+
+      <Lightbox src={lightbox.src} onClose={lightbox.close} />
     </FormCard>
   );
 }

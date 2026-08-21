@@ -82,6 +82,7 @@ export interface EquineProfileData {
   age: string;
   registration: string;
   healthStatus: string;
+  coverPhotoUrl?: string | null;
   // Nutrição
   feedKgDay?: number | null;
   feedBrand?: string | null;
@@ -112,14 +113,16 @@ const BREED_LABEL: Record<string, string> = {
   ANDALUZ: 'Andaluz', ARABE: 'Árabe', HAFLINGER: 'Haflinger',
   FRIESIO: 'Frísio', ARDENÊS: 'Ardenês', OTHER: 'Outra raça',
 };
+// Cadastros antigos usavam códigos próprios; os novos já gravam o rótulo puro
+// (igual ao catálogo do veterinário) e caem no fallback do label() abaixo.
 const SEX_LABEL: Record<string, string> = {
-  GARANHAO: 'Garanhão', CASTRADO: 'Castrado', EGUA: 'Égua',
-  POTRANCA: 'Potranca', POTRO: 'Potro', POTRO_CASTRADO: 'Potro castrado',
+  GARANHAO: 'Macho', CASTRADO: 'Macho Castrado', EGUA: 'Fêmea',
+  POTRANCA: 'Fêmea', POTRO: 'Macho', POTRO_CASTRADO: 'Macho Castrado',
 };
 const COAT_LABEL: Record<string, string> = {
-  ALAZAO: 'Alazão', TORDILHO: 'Tordilho', RUAO: 'Ruão', BAYO: 'Baio',
-  ZAINO: 'Zaino', ROSILHO: 'Rosilho', PAMPA: 'Pampa', MALHADO: 'Malhado',
-  PRETO: 'Preto', BRANCO: 'Branco', ISABELA: 'Isabela', PALOMINO: 'Palomino', OTHER: 'Outro',
+  ALAZAO: 'Alazã', TORDILHO: 'Tordilha', RUAO: 'Ruão', BAYO: 'Baia',
+  ZAINO: 'Zaina', ROSILHO: 'Rosilha', PAMPA: 'Pampa', MALHADO: 'Malhada',
+  PRETO: 'Preta', BRANCO: 'Branca', ISABELA: 'Isabela', PALOMINO: 'Palomina', OTHER: 'Outra',
 };
 
 function label(map: Record<string, string>, val: string) {
@@ -519,6 +522,38 @@ export const EquineProfile = ({ equine, alerts = [] }: { equine: EquineProfileDa
   const [confirmText, setConfirmText] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [coverUrl, setCoverUrl] = useState<string | null>(null);
+  const [coverUploading, setCoverUploading] = useState(false);
+  const [coverError, setCoverError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (equine.coverPhotoUrl) resolveDocUrl(equine.coverPhotoUrl).then(setCoverUrl);
+  }, [equine.coverPhotoUrl]);
+
+  async function handleCoverSelect(file: File) {
+    setCoverError(null);
+    if (!file.type.startsWith('image/')) { setCoverError('Envie um arquivo de imagem.'); return; }
+    if (file.size > 10 * 1024 * 1024) { setCoverError('Imagem muito grande (máx. 10 MB).'); return; }
+
+    setCoverUploading(true);
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { setCoverError('Sessão expirada. Faça login novamente.'); setCoverUploading(false); return; }
+
+    const ext  = file.name.includes('.') ? file.name.split('.').pop()!.toLowerCase() : 'jpg';
+    const path = `${user.id}/equinos/${equine.id}/capa-${Date.now()}.${ext}`;
+
+    const { error: upErr } = await supabase.storage.from('docs').upload(path, file, { contentType: file.type });
+    if (upErr) { setCoverError('Falha ao enviar a imagem. Tente novamente.'); setCoverUploading(false); return; }
+
+    const { error: dbErr } = await supabase.from('equinos').update({ cover_photo_url: path }).eq('id', equine.id);
+    if (dbErr) { setCoverError('Falha ao salvar a capa. Tente novamente.'); setCoverUploading(false); return; }
+
+    const signedUrl = await resolveDocUrl(path);
+    setCoverUrl(signedUrl);
+    setCoverUploading(false);
+  }
+
   const tabs: { id: Tab; label: string }[] = [
     { id: 'overview', label: 'Visão Geral' },
     { id: 'health', label: 'Saúde e Manejo' },
@@ -573,9 +608,38 @@ export const EquineProfile = ({ equine, alerts = [] }: { equine: EquineProfileDa
 
       {/* Hero Card */}
       <div style={{ borderRadius: '1.25rem', border: `1px solid ${C.border}`, overflow: 'hidden', background: C.card }}>
-        <div style={{ height: '11rem', position: 'relative', background: 'linear-gradient(135deg, hsl(168 83% 14%) 0%, hsl(220 60% 22%) 50%, hsl(250 55% 28%) 100%)' }}>
-          <div style={{ position: 'absolute', inset: 0, backgroundImage: 'radial-gradient(ellipse at 15% 60%, hsl(168 83% 35% / 0.35) 0%, transparent 55%), radial-gradient(ellipse at 85% 20%, hsl(220 70% 50% / 0.2) 0%, transparent 50%)' }} />
-          <div style={{ position: 'absolute', inset: 0, opacity: 0.07, backgroundImage: 'linear-gradient(hsl(0 0% 100%) 1px, transparent 1px), linear-gradient(90deg, hsl(0 0% 100%) 1px, transparent 1px)', backgroundSize: '32px 32px' }} />
+        <div style={{
+          height: '11rem', position: 'relative',
+          background: coverUrl
+            ? `linear-gradient(180deg, hsl(0 0% 0% / 0.15) 0%, hsl(0 0% 0% / 0.45) 100%), url(${coverUrl}) center / cover no-repeat`
+            : 'linear-gradient(135deg, hsl(168 83% 14%) 0%, hsl(220 60% 22%) 50%, hsl(250 55% 28%) 100%)',
+        }}>
+          {!coverUrl && (
+            <>
+              <div style={{ position: 'absolute', inset: 0, backgroundImage: 'radial-gradient(ellipse at 15% 60%, hsl(168 83% 35% / 0.35) 0%, transparent 55%), radial-gradient(ellipse at 85% 20%, hsl(220 70% 50% / 0.2) 0%, transparent 50%)' }} />
+              <div style={{ position: 'absolute', inset: 0, opacity: 0.07, backgroundImage: 'linear-gradient(hsl(0 0% 100%) 1px, transparent 1px), linear-gradient(90deg, hsl(0 0% 100%) 1px, transparent 1px)', backgroundSize: '32px 32px' }} />
+            </>
+          )}
+          <label style={{
+            position: 'absolute', top: 12, right: 12, display: 'inline-flex', alignItems: 'center', gap: 6,
+            padding: '6px 12px', borderRadius: '0.625rem', background: 'hsl(0 0% 0% / 0.5)', color: '#fff',
+            fontSize: 12, fontWeight: 600, cursor: coverUploading ? 'not-allowed' : 'pointer', backdropFilter: 'blur(4px)',
+          }}>
+            <Svg d='<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/>' size={13} />
+            {coverUploading ? 'Enviando…' : 'Alterar capa'}
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              disabled={coverUploading}
+              style={{ display: 'none' }}
+              onChange={e => { const f = e.target.files?.[0]; if (f) handleCoverSelect(f); e.target.value = ''; }}
+            />
+          </label>
+          {coverError && (
+            <span style={{ position: 'absolute', top: 50, right: 12, fontSize: 11, fontWeight: 600, color: '#fff', background: C.red, padding: '4px 10px', borderRadius: '0.5rem', maxWidth: 220, textAlign: 'right' }}>
+              {coverError}
+            </span>
+          )}
         </div>
 
         <div style={{ padding: '0 1.75rem 1.75rem' }}>

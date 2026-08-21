@@ -32,6 +32,13 @@ const NAV = [
     icon: '<path d="M13 2C11 2 10 3 10 5v2H7L5 9v2l2 1v4l-2 2v2h4v-2l2-1 2 1v2h4v-2l-2-2v-4l2-1V9l-2-2h-3V5c0-2-1-3-1-3z"/>',
   },
   {
+    href: '/admin/vinculos',
+    label: 'Vínculos',
+    exact: false,
+    badge: null,
+    icon: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+  },
+  {
     href: '/admin/assinaturas',
     label: 'Assinaturas',
     exact: false,

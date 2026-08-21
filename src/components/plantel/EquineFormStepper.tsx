@@ -1,6 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { z } from 'zod';
-import { createClient, PLAN_LIMITS } from '../../lib/supabase';
+import { createClient, PLAN_LIMITS, resolveDocUrl } from '../../lib/supabase';
+import { SEXOS, PELAGENS } from '../../lib/vetCatalogs';
+import {
+  EquinePhotosGrid, PHOTO_SLOTS, emptyPhotosState, missingPhotos,
+  type PhotosState, type PhotoKey, type PhotoSlotState,
+} from '../shared/EquinePhotos';
+import { Lightbox, useLightbox } from '../shared/Lightbox';
 
 const equineSchema = z.object({
   name: z.string().min(1, 'Nome é obrigatório').trim(),
@@ -83,30 +89,9 @@ const BREEDS = [
   { value: 'OTHER', label: 'Outra raça' },
 ];
 
-const SEX_OPTIONS = [
-  { value: 'GARANHAO', label: 'Garanhão (Macho inteiro)' },
-  { value: 'CASTRADO', label: 'Castrado' },
-  { value: 'EGUA', label: 'Égua' },
-  { value: 'POTRANCA', label: 'Potranca' },
-  { value: 'POTRO', label: 'Potro' },
-  { value: 'POTRO_CASTRADO', label: 'Potro castrado' },
-];
-
-const COAT_OPTIONS = [
-  { value: 'ALAZAO', label: 'Alazão' },
-  { value: 'TORDILHO', label: 'Tordilho' },
-  { value: 'RUAO', label: 'Ruão' },
-  { value: 'BAYO', label: 'Baio' },
-  { value: 'ZAINO', label: 'Zaino (Castanho)' },
-  { value: 'ROSILHO', label: 'Rosilho' },
-  { value: 'PAMPA', label: 'Pampa' },
-  { value: 'MALHADO', label: 'Malhado' },
-  { value: 'PRETO', label: 'Preto' },
-  { value: 'BRANCO', label: 'Branco' },
-  { value: 'ISABELA', label: 'Isabela' },
-  { value: 'PALOMINO', label: 'Palomino' },
-  { value: 'OTHER', label: 'Outro' },
-];
+// Sexo e pelagem usam o mesmo catálogo do cadastro do veterinário (lib/vetCatalogs)
+const SEX_OPTIONS = SEXOS.map(s => ({ value: s, label: s }));
+const COAT_OPTIONS = PELAGENS.map(p => ({ value: p, label: p }));
 
 const PURPOSE_OPTIONS = [
   { value: 'ESPORTE_HIPISMO', label: 'Hipismo' },
@@ -135,7 +120,6 @@ type FormData = {
   name: string; nickname: string; breed: string; breedOther: string;
   sex: string; coat: string; coatOther: string;
   birthDate: string; estimatedAge: string;
-  microchipNumber: string; brandDescription: string;
   purpose: string[]; stable: string; property: string;
   abqmRegistry: string; abccmRegistry: string; abpsiRegistry: string;
   abccrRegistry: string; otherRegistry: string; registryEntity: string;
@@ -154,7 +138,7 @@ type FormData = {
 
 const emptyForm: FormData = {
   name: '', nickname: '', breed: '', breedOther: '', sex: '', coat: '', coatOther: '',
-  birthDate: '', estimatedAge: '', microchipNumber: '', brandDescription: '',
+  birthDate: '', estimatedAge: '',
   purpose: [], stable: '', property: '',
   abqmRegistry: '', abccmRegistry: '', abpsiRegistry: '', abccrRegistry: '',
   otherRegistry: '', registryEntity: '', passportNumber: '',
@@ -173,7 +157,6 @@ function rowToForm(row: any): FormData {
     breed: row.breed ?? '', breedOther: row.breed_other ?? '',
     sex: row.sex ?? '', coat: row.coat ?? '', coatOther: row.coat_other ?? '',
     birthDate: row.birth_date ?? '', estimatedAge: row.estimated_age?.toString() ?? '',
-    microchipNumber: row.microchip ?? '', brandDescription: row.brand_desc ?? '',
     purpose: row.purpose ?? [], stable: row.stable ?? '', property: '',
     abqmRegistry: row.reg_abqm ?? '', abccmRegistry: row.reg_abccm ?? '',
     abpsiRegistry: row.reg_abpsi ?? '', abccrRegistry: row.reg_abccc ?? '',
@@ -268,22 +251,37 @@ function Step1({ f, set }: { f: FormData; set: (k: keyof FormData, v: any) => vo
         <Field label="Idade estimada (meses)" helper="Use quando não souber a data exata">
           <input type="number" min={1} max={600} value={f.estimatedAge} onChange={e => set('estimatedAge', e.target.value)} placeholder="Ex.: 84 (7 anos)" style={inputStyle} disabled={!!f.birthDate} />
         </Field>
-        <Field label="Nº microchip (RFID)" helper="15 dígitos — obrigatório em alguns estados">
-          <input type="text" value={f.microchipNumber} onChange={e => set('microchipNumber', e.target.value)} placeholder="000000000000000" maxLength={15} style={inputStyle} />
-        </Field>
         <Field label="Baia / Piquete">
           <input type="text" value={f.stable} onChange={e => set('stable', e.target.value)} placeholder="Ex.: Baia 04" style={inputStyle} />
         </Field>
-        <div style={{ gridColumn: '1 / -1' }}>
-          <Field label="Resenha / Sinais" helper="Descreva marcas naturais, marcas a ferro, estrela, calçados, etc.">
-            <textarea value={f.brandDescription} onChange={e => set('brandDescription', e.target.value)} placeholder="Ex.: Estrela oval na testa, calçado do bipé posterior esquerdo, marca a ferro no quadril direito (HCS)." rows={3} style={{ ...inputStyle, resize: 'vertical' }} />
-          </Field>
-        </div>
         <div style={{ gridColumn: '1 / -1' }}>
           <label style={labelStyle}>Finalidade / Uso</label>
           <CheckboxGroup options={PURPOSE_OPTIONS} selected={f.purpose} onChange={v => set('purpose', v)} />
         </div>
       </div>
+    </div>
+  );
+}
+
+function PhotosSection({ photos, errorKeys, onChange, onZoom }: {
+  photos: PhotosState;
+  errorKeys: PhotoKey[];
+  onChange: (key: PhotoKey, slot: PhotoSlotState) => void;
+  onZoom: (url: string) => void;
+}) {
+  return (
+    <div style={{ marginTop: '0.5rem' }}>
+      <label style={labelStyle}>Fotos do Animal *</label>
+      <div style={{ padding: '0.75rem 1rem', borderRadius: '0.75rem', background: C.greenLight, border: `1px solid ${C.greenBorder}`, fontSize: '0.8125rem', color: C.green, fontWeight: 500, marginBottom: '0.75rem' }}>
+        Envie as 4 fotos: frente, costas, lateral esquerda e lateral direita. Enquadre a imagem perfeitamente, do casco até a orelha.
+      </div>
+      <EquinePhotosGrid
+        photos={photos}
+        errorKeys={errorKeys}
+        accent={C.green}
+        onChange={onChange}
+        onZoom={onZoom}
+      />
     </div>
   );
 }
@@ -396,7 +394,7 @@ function Step4({ f, set }: { f: FormData; set: (k: keyof FormData, v: any) => vo
 }
 
 function Step5({ f, set }: { f: FormData; set: (k: keyof FormData, v: any) => void }) {
-  const isFemale = f.sex === 'EGUA' || f.sex === 'POTRANCA';
+  const isFemale = f.sex === 'Fêmea';
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
@@ -523,7 +521,6 @@ function Step7({ f }: { f: FormData }) {
         <ReviewRow label="Sexo" value={sexLabel || '—'} />
         <ReviewRow label="Pelagem" value={coatLabel || '—'} />
         <ReviewRow label="Nascimento" value={f.birthDate || (f.estimatedAge ? `~${f.estimatedAge} meses` : undefined)} />
-        <ReviewRow label="Microchip" value={f.microchipNumber} />
         <ReviewRow label="Finalidade" value={purposeLabels || '—'} />
         <ReviewRow label="Baia" value={f.stable} />
       </>)}
@@ -559,10 +556,44 @@ export default function EquineFormStepper({ initialData, equineId }: { initialDa
   const [saveError, setSaveError] = useState<string | null>(null);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
 
+  const [photos, setPhotos] = useState<PhotosState>(emptyPhotosState());
+  const [photoErrorKeys, setPhotoErrorKeys] = useState<PhotoKey[]>([]);
+  const lightbox = useLightbox();
+
   const supabase = createClient();
+
+  // Edição: carrega fotos já existentes no storage
+  useEffect(() => {
+    if (!isEdit || !equineId) return;
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data: files } = await supabase.storage.from('docs').list(`${user.id}/equinos/${equineId}`, { limit: 100 });
+      const next = emptyPhotosState();
+      for (const slot of PHOTO_SLOTS) {
+        const found = (files ?? []).find(x => x.name.startsWith(`foto-${slot.key}`));
+        if (found) {
+          const fullPath = `${user.id}/equinos/${equineId}/${found.name}`;
+          const signedUrl = await resolveDocUrl(fullPath);
+          next[slot.key] = { file: null, existingUrl: signedUrl, storagePath: fullPath };
+        }
+      }
+      setPhotos(next);
+    })();
+  }, [isEdit, equineId]);
 
   function setField(key: keyof FormData, value: any) {
     setForm((prev) => ({ ...prev, [key]: value }));
+  }
+
+  async function uploadEquinePhoto(userId: string, targetEquineId: string, slotKey: string, file: File, existingPaths: string[]): Promise<string> {
+    const toDelete = existingPaths.filter(p => p.includes(`/foto-${slotKey}-`) || p.endsWith(`/foto-${slotKey}`));
+    if (toDelete.length) await supabase.storage.from('docs').remove(toDelete);
+    const ext = file.name.includes('.') ? file.name.split('.').pop()!.toLowerCase() : 'jpg';
+    const path = `${userId}/equinos/${targetEquineId}/foto-${slotKey}-${Date.now()}.${ext}`;
+    const { error: upErr } = await supabase.storage.from('docs').upload(path, file, { contentType: file.type || 'image/jpeg' });
+    if (upErr) throw new Error('Falha ao enviar foto. Tente novamente.');
+    return path;
   }
 
   async function handleSave() {
@@ -579,6 +610,13 @@ export default function EquineFormStepper({ initialData, equineId }: { initialDa
 
     if (!validation.success) {
       setValidationErrors(validation.error.errors.map((e) => e.message));
+      return;
+    }
+
+    const missing = missingPhotos(photos);
+    if (missing.length > 0) {
+      setPhotoErrorKeys(PHOTO_SLOTS.filter(s => !photos[s.key].file && !photos[s.key].existingUrl).map(s => s.key));
+      setSaveError(`Envie as 4 fotos obrigatórias do animal: ${missing.join(', ')}.`);
       return;
     }
 
@@ -612,7 +650,30 @@ export default function EquineFormStepper({ initialData, equineId }: { initialDa
       }
     }
 
+    // Gera o id antes do insert para poder nomear os arquivos de foto
+    const targetEquineId = isEdit ? equineId! : crypto.randomUUID();
+
+    let photoPaths: Record<string, string | null>;
+    try {
+      const existingPaths = PHOTO_SLOTS
+        .map(s => photos[s.key].storagePath)
+        .filter((p): p is string => !!p);
+
+      const uploaded = await Promise.all(PHOTO_SLOTS.map(async s => {
+        const f = photos[s.key].file;
+        if (!f) return [s.key, photos[s.key].storagePath] as const;
+        const path = await uploadEquinePhoto(session.user.id, targetEquineId, s.key, f, existingPaths);
+        return [s.key, path] as const;
+      }));
+      photoPaths = Object.fromEntries(uploaded);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Falha ao enviar as fotos. Tente novamente.');
+      setSaving(false);
+      return;
+    }
+
     const payload = {
+      id: targetEquineId,
       user_id: session.user.id,
       name: form.name.trim(),
       nickname: nullify(form.nickname),
@@ -623,8 +684,10 @@ export default function EquineFormStepper({ initialData, equineId }: { initialDa
       coat_other: nullify(form.coatOther),
       birth_date: nullify(form.birthDate),
       estimated_age: form.birthDate ? null : nullifyNum(form.estimatedAge),
-      microchip: nullify(form.microchipNumber),
-      brand_desc: nullify(form.brandDescription),
+      photo_frente: photoPaths['frente'] ?? null,
+      photo_costas: photoPaths['costas'] ?? null,
+      photo_lateral_esquerda: photoPaths['lateral-esquerda'] ?? null,
+      photo_lateral_direita: photoPaths['lateral-direita'] ?? null,
       purpose: form.purpose,
       stable: nullify(form.stable),
       reg_abqm: nullify(form.abqmRegistry),
@@ -660,7 +723,8 @@ export default function EquineFormStepper({ initialData, equineId }: { initialDa
     };
 
     if (isEdit) {
-      const { error } = await supabase.from('equinos').update(payload).eq('id', equineId);
+      const { id: _id, ...updatePayload } = payload;
+      const { error } = await supabase.from('equinos').update(updatePayload).eq('id', equineId);
       setSaving(false);
       if (error) {
         setSaveError('Erro ao salvar. Tente novamente.');
@@ -670,21 +734,17 @@ export default function EquineFormStepper({ initialData, equineId }: { initialDa
       return;
     }
 
-    // Criação: insere e captura o id para o onboarding de saúde
-    const { data: created, error } = await supabase
-      .from('equinos')
-      .insert(payload)
-      .select('id')
-      .single();
+    // Criação: insere com o id já gerado para as fotos; segue para o onboarding de saúde
+    const { error } = await supabase.from('equinos').insert(payload);
     setSaving(false);
 
-    if (error || !created) {
+    if (error) {
       setSaveError('Erro ao salvar. Tente novamente.');
       return;
     }
 
     // O trigger gera os alertas obrigatórios; segue para o onboarding de saúde
-    window.location.href = `/dashboard/equino/${created.id}/setup-saude`;
+    window.location.href = `/dashboard/equino/${targetEquineId}/setup-saude`;
   }
 
   const isFirst = step === 1;
@@ -743,7 +803,20 @@ export default function EquineFormStepper({ initialData, equineId }: { initialDa
           ETAPA {step} — {STEPS[step - 1].label}
           {step === 4 && <span style={{ marginLeft: 8, background: C.greenLight, color: C.green, padding: '2px 8px', borderRadius: 999, fontSize: '0.625rem', fontWeight: 700 }}>OPCIONAL</span>}
         </p>
-        {step === 1 && <Step1 f={form} set={setField} />}
+        {step === 1 && (
+          <>
+            <Step1 f={form} set={setField} />
+            <PhotosSection
+              photos={photos}
+              errorKeys={photoErrorKeys}
+              onChange={(key, slot) => {
+                setPhotos(prev => ({ ...prev, [key]: slot }));
+                setPhotoErrorKeys(prev => prev.filter(k => k !== key));
+              }}
+              onZoom={lightbox.open}
+            />
+          </>
+        )}
         {step === 2 && <Step2 f={form} set={setField} />}
         {step === 3 && <Step5 f={form} set={setField} />}
         {step === 4 && <Step6 f={form} set={setField} />}
@@ -797,6 +870,8 @@ export default function EquineFormStepper({ initialData, equineId }: { initialDa
           </div>
         )}
       </div>
+
+      <Lightbox src={lightbox.src} onClose={lightbox.close} />
     </div>
   );
 }

@@ -102,7 +102,9 @@ function StethoscopeIcon() {
 }
 
 type Role = 'dono' | 'veterinario';
-type Step = 1 | 2 | 3 | 'success';
+type Step = 1 | 2 | 3 | 'vetlink' | 'success';
+
+interface VetResult { id: string; full_name: string; crmv: string | null; specialty: string | null; }
 
 // Tenta upsert com novas colunas; se falhar (migration não rodou), usa fallback
 async function upsertProfile(supabase: ReturnType<typeof import('../../lib/supabase').createClient>, data: {
@@ -164,6 +166,14 @@ export default function RegisterForm() {
   const [isDark] = useState(() =>
     typeof document !== 'undefined' && document.documentElement.classList.contains('dark')
   );
+
+  // Vínculo com veterinário (etapa pós-cadastro, só para role === 'dono')
+  const [newUserId, setNewUserId]     = useState<string | null>(null);
+  const [vetSearch, setVetSearch]     = useState('');
+  const [vetResults, setVetResults]   = useState<VetResult[]>([]);
+  const [vetSearching, setVetSearching] = useState(false);
+  const [vetLinkMsg, setVetLinkMsg]   = useState<string | null>(null);
+  const [vetLinkSaving, setVetLinkSaving] = useState(false);
 
   const supabase = createClient();
 
@@ -253,14 +263,125 @@ export default function RegisterForm() {
     }
 
     if (session) {
-      window.location.href = role === 'veterinario' ? '/vet' : '/dashboard';
+      if (role === 'veterinario') {
+        window.location.href = '/vet';
+      } else if (userId) {
+        setNewUserId(userId);
+        setStep('vetlink');
+      } else {
+        window.location.href = '/dashboard';
+      }
     } else {
       setStep('success');
     }
   }
 
+  async function searchVets() {
+    if (vetSearch.trim().length < 2) {
+      setVetLinkMsg('Digite ao menos 2 caracteres (nome ou CRMV).');
+      setVetResults([]);
+      return;
+    }
+    setVetSearching(true);
+    setVetLinkMsg(null);
+    const { data, error: err } = await supabase.rpc('search_veterinarios', { p_query: vetSearch.trim() });
+    setVetSearching(false);
+    if (err || !data || data.length === 0) {
+      setVetResults([]);
+      setVetLinkMsg('Nenhum veterinário encontrado com esse nome/CRMV.');
+      return;
+    }
+    setVetResults(data);
+  }
+
+  async function sendVetLinkRequest(vetId: string) {
+    if (!newUserId) return;
+    setVetLinkSaving(true);
+    const { error: err } = await supabase.from('vet_owner_links').insert({
+      owner_id: newUserId, vet_id: vetId, owner_name: fullName, owner_email: email,
+    });
+    setVetLinkSaving(false);
+    if (err) { setVetLinkMsg('Não foi possível enviar o vínculo. Tente novamente.'); return; }
+    window.location.href = '/dashboard?vinculo=enviado';
+  }
+
+  async function skipVetSearch() {
+    if (!newUserId) { window.location.href = '/dashboard'; return; }
+    setVetLinkSaving(true);
+    await supabase.from('vet_owner_links').insert({
+      owner_id: newUserId, vet_id: null, owner_name: fullName, owner_email: email,
+      note: 'Dono não encontrou o veterinário na busca',
+    });
+    window.location.href = '/dashboard?vinculo=pendente';
+  }
+
   const totalSteps = role === 'veterinario' ? 3 : 3;
   const currentStepNum = step === 1 ? 1 : step === 2 ? 2 : step === 3 ? 3 : 3;
+
+  if (step === 'vetlink') {
+    return (
+      <div style={{ width: '100%', maxWidth: 480 }}>
+        <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
+          <img
+            src={isDark ? '/images/logowhite.png' : '/images/logodark.png'}
+            alt="EquiCore"
+            style={{ height: 36, margin: '0 auto', display: 'block' }}
+            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+          />
+        </div>
+        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '1.25rem', padding: '2rem', boxShadow: '0 4px 24px hsl(0 0% 0% / 0.06)' }}>
+          <h1 style={{ fontSize: '1.25rem', fontWeight: 800, color: C.fg, marginBottom: '0.375rem' }}>Vincule seu veterinário</h1>
+          <p style={{ fontSize: '0.875rem', color: C.muted, marginBottom: '1.25rem' }}>
+            Busque pelo nome ou CRMV do veterinário de sua confiança para enviar um pedido de vínculo. Ele poderá aceitar ou recusar.
+          </p>
+
+          <div style={{ display: 'flex', gap: 8, marginBottom: '0.75rem' }}>
+            <input
+              type="text"
+              value={vetSearch}
+              onChange={e => setVetSearch(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); searchVets(); } }}
+              placeholder="Nome ou CRMV (ex.: MT-12345)"
+              style={inputBase}
+            />
+            <button type="button" onClick={searchVets} disabled={vetSearching}
+              style={{ padding: '0 1.25rem', borderRadius: '0.625rem', background: C.green, color: '#fff', fontWeight: 600, fontSize: '0.875rem', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+              {vetSearching ? 'Buscando…' : 'Buscar'}
+            </button>
+          </div>
+
+          {vetLinkMsg && <p style={{ fontSize: '0.8125rem', color: C.muted, marginBottom: '0.75rem' }}>{vetLinkMsg}</p>}
+
+          {vetResults.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: '1.25rem' }}>
+              {vetResults.map(v => (
+                <div key={v.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '0.75rem 1rem', borderRadius: '0.75rem', border: `1px solid ${C.border}` }}>
+                  <div>
+                    <p style={{ fontSize: '0.875rem', fontWeight: 700, color: C.fg }}>{v.full_name}</p>
+                    <p style={{ fontSize: '0.75rem', color: C.muted }}>{[v.crmv, v.specialty].filter(Boolean).join(' · ') || 'Veterinário(a)'}</p>
+                  </div>
+                  <button type="button" onClick={() => sendVetLinkRequest(v.id)} disabled={vetLinkSaving}
+                    style={{ padding: '0.5rem 1rem', borderRadius: '0.625rem', background: C.green, color: '#fff', fontWeight: 600, fontSize: '0.8125rem', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                    Enviar vínculo
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: '0.5rem', borderTop: `1px solid ${C.border}` }}>
+            <button type="button" onClick={skipVetSearch} disabled={vetLinkSaving}
+              style={{ padding: '0.625rem', borderRadius: '0.625rem', background: 'hsl(var(--muted))', color: C.fg, fontWeight: 600, fontSize: '0.8125rem', border: 'none', cursor: 'pointer', marginTop: '0.75rem' }}>
+              Não encontrei meu veterinário
+            </button>
+            <a href="/dashboard" style={{ textAlign: 'center', fontSize: '0.8125rem', fontWeight: 500, color: C.muted, textDecoration: 'none', padding: '0.375rem' }}>
+              Pular por enquanto
+            </a>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (step === 'success') {
     return (

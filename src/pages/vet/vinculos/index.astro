@@ -1,0 +1,10 @@
+---
+export const prerender = false;
+
+import VetLayout from '../../../layouts/VetLayout.astro';
+import VetVinculos from '../../../components/vet/VetVinculos';
+---
+
+<VetLayout title="Vínculos — Equicore Vet">
+  <VetVinculos client:load />
+</VetLayout>
