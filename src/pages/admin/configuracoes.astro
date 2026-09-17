@@ -1,7 +1,10 @@
 ---
 import AdminLayout from '../../layouts/AdminLayout.astro';
 import ConfiguracoesAdmin from '../../components/admin/ConfiguracoesAdmin';
+
+const stripeSecretConfigured = Boolean(import.meta.env.STRIPE_SECRET_KEY);
+const stripeWebhookConfigured = Boolean(import.meta.env.STRIPE_WEBHOOK_SECRET);
 ---
 <AdminLayout title="Configurações — Admin EquiCore">
-  <ConfiguracoesAdmin client:load />
+  <ConfiguracoesAdmin client:load stripeSecretConfigured={stripeSecretConfigured} stripeWebhookConfigured={stripeWebhookConfigured} />
 </AdminLayout>

@@ -60,7 +60,12 @@ const TABS = [
   { key: 'integracao', label: 'Integrações', icon: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>' },
 ];
 
-export default function ConfiguracoesAdmin() {
+interface Props {
+  stripeSecretConfigured: boolean;
+  stripeWebhookConfigured: boolean;
+}
+
+export default function ConfiguracoesAdmin({ stripeSecretConfigured, stripeWebhookConfigured }: Props) {
   const [tab, setTab] = useState('geral');
   const [saved, setSaved] = useState<string | null>(null);
 
@@ -106,9 +111,6 @@ export default function ConfiguracoesAdmin() {
   const [logLevel, setLogLevel] = useState('INFO');
 
   // Integrations
-  const [stripePublic, setStripePublic] = useState('pk_live_...');
-  const [stripeSecret, setStripeSecret] = useState('');
-  const [stripeWebhook, setStripeWebhook] = useState('whsec_...');
   const [googleAnalytics, setGoogleAnalytics] = useState('G-XXXXXXX');
   const [sentryDsn, setSentryDsn] = useState('');
   const [whatsappToken, setWhatsappToken] = useState('');
@@ -381,20 +383,36 @@ export default function ConfiguracoesAdmin() {
                 <p style={{ fontSize: '0.8125rem', color: C.muted, marginTop: 2 }}>APIs externas e serviços conectados</p>
               </div>
               <div style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
+                  <div style={{ padding: '0.875rem 1rem', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: C.fg }}>Stripe (Pagamentos)</span>
+                    <span style={{ fontSize: '0.6875rem', fontWeight: 700, padding: '2px 8px', borderRadius: 99, background: stripeSecretConfigured && stripeWebhookConfigured ? C.greenLight : 'hsl(var(--muted))', color: stripeSecretConfigured && stripeWebhookConfigured ? C.green : C.muted }}>
+                      {stripeSecretConfigured && stripeWebhookConfigured ? 'Conectado' : 'Não configurado'}
+                    </span>
+                  </div>
+                  <div style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
+                    <p style={{ fontSize: '0.8125rem', color: C.muted }}>
+                      Por segurança, as chaves da Stripe não ficam neste formulário — são definidas como variáveis de
+                      ambiente no servidor (Vercel → Project Settings → Environment Variables).
+                    </p>
+                    {[
+                      { label: 'STRIPE_SECRET_KEY', ok: stripeSecretConfigured },
+                      { label: 'STRIPE_WEBHOOK_SECRET', ok: stripeWebhookConfigured },
+                    ].map(v => (
+                      <div key={v.label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ width: 8, height: 8, borderRadius: '50%', background: v.ok ? C.green : C.muted, flexShrink: 0 }} />
+                        <code style={{ fontSize: '0.8125rem', color: C.fg }}>{v.label}</code>
+                        <span style={{ fontSize: '0.75rem', color: v.ok ? C.green : C.muted, fontWeight: 600 }}>{v.ok ? 'definida' : 'ausente'}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
                 {[
-                  {
-                    title: 'Stripe (Pagamentos)',
-                    fields: [
-                      { label: 'Chave Pública (pk_live_...)', value: stripePublic, set: setStripePublic, type: 'text' },
-                      { label: 'Chave Secreta (sk_live_...)', value: stripeSecret, set: setStripeSecret, type: 'password', placeholder: '••••••••••••' },
-                      { label: 'Webhook Secret (whsec_...)', value: stripeWebhook, set: setStripeWebhook, type: 'text' },
-                    ],
-                    status: 'connected',
-                  },
                   {
                     title: 'Google Analytics',
                     fields: [
-                      { label: 'Measurement ID (G-...)', value: googleAnalytics, set: setGoogleAnalytics, type: 'text' },
+                      { label: 'Measurement ID (G-...)', value: googleAnalytics, set: setGoogleAnalytics, type: 'text', placeholder: undefined as string | undefined },
                     ],
                     status: googleAnalytics ? 'connected' : 'disconnected',
                   },

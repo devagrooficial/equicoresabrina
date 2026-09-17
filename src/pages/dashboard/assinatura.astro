@@ -1,0 +1,34 @@
+---
+export const prerender = false;
+import Layout from '../../layouts/Layout.astro';
+import Header from '../../components/dashboard/Header';
+import AssinaturaPage from '../../components/dashboard/AssinaturaPage';
+import { createServerSupabaseClient } from '../../lib/supabase';
+
+const responseHeaders = new Headers();
+const supabase = createServerSupabaseClient(Astro.request, responseHeaders);
+const { data: { user } } = await supabase.auth.getUser();
+
+if (!user) {
+  return Astro.redirect('/login');
+}
+
+const [{ data: subscription }, { data: settings }] = await Promise.all([
+  supabase.from('subscriptions').select('status, price_cents, currency, current_period_end, cancel_at_period_end').eq('owner_id', user.id).maybeSingle(),
+  supabase.from('billing_settings').select('monthly_price_cents, currency, trial_days, product_name').eq('id', 1).maybeSingle(),
+]);
+---
+
+<Layout title="Assinatura — EquiCore">
+  <Header client:load currentPath={Astro.url.pathname} />
+  <main class="w-full max-w-3xl mx-auto px-4 md:px-8 py-8">
+    <AssinaturaPage
+      client:load
+      subscription={subscription ?? null}
+      priceCents={settings?.monthly_price_cents ?? 0}
+      currency={settings?.currency ?? 'brl'}
+      trialDays={settings?.trial_days ?? 0}
+      productName={settings?.product_name ?? 'EquiCore Haras'}
+    />
+  </main>
+</Layout>

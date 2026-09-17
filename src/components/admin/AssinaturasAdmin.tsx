@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { createClient } from '../../lib/supabase';
 
 const C = {
   green: 'hsl(168 83% 29%)',
@@ -26,23 +27,25 @@ const C = {
 
 type SubTab = 'assinaturas' | 'planos' | 'cupons';
 
-const SUBSCRIPTIONS = [
-  { id: 's1', user: 'Sabrina Santos', email: 'sabrina@harasantaclara.com', plan: 'Pro', status: 'ACTIVE', billing: 'Mensal', amount: 89, nextBilling: '24/06/2026', started: '24/01/2026' },
-  { id: 's2', user: 'Rancho Bom Jesus', email: 'admin@ranchobomjesus.com.br', plan: 'Haras', status: 'ACTIVE', billing: 'Anual', amount: 1890, nextBilling: '21/05/2027', started: '21/05/2026' },
-  { id: 's3', user: 'Felipe Moraes', email: 'felipe@harasmorais.com', plan: 'Pro', status: 'ACTIVE', billing: 'Mensal', amount: 89, nextBilling: '23/06/2026', started: '23/05/2026' },
-  { id: 's4', user: 'Ana Letícia Braga', email: 'analeticia@equidrome.com', plan: 'Pro', status: 'ACTIVE', billing: 'Mensal', amount: 89, nextBilling: '20/06/2026', started: '20/05/2026' },
-  { id: 's5', user: 'Haras Boa Esperança', email: 'contato@harasboaesperanca.com.br', plan: 'Haras', status: 'ACTIVE', billing: 'Mensal', amount: 189, nextBilling: '03/06/2026', started: '03/04/2026' },
-  { id: 's6', user: 'Roberto Figueiredo', email: 'r.figueiredo@hotmail.com', plan: 'Starter', status: 'PAST_DUE', billing: 'Mensal', amount: 39, nextBilling: '10/05/2026', started: '14/03/2026' },
-  { id: 's7', user: 'Granja Santo Antônio', email: 'gsa@granjaantonio.com.br', plan: 'Haras', status: 'ACTIVE', billing: 'Anual', amount: 2016, nextBilling: '10/01/2027', started: '10/01/2026' },
-  { id: 's8', user: 'Carla Duarte', email: 'carla.duarte@gmail.com', plan: 'Starter', status: 'ACTIVE', billing: 'Mensal', amount: 39, nextBilling: '22/06/2026', started: '22/05/2026' },
-];
+interface SubscriptionRow {
+  id: string;
+  owner_name: string | null;
+  owner_email: string | null;
+  farm_name: string | null;
+  status: string;
+  price_cents: number | null;
+  currency: string | null;
+  current_period_end: string | null;
+  cancel_at_period_end: boolean;
+  created_at: string;
+}
 
-const PLANS_DATA = [
-  { id: 'p1', name: 'Gratuito', slug: 'free', equines: 2, storage: '500 MB', monthly: 0, yearly: 0, users: 540, active: true },
-  { id: 'p2', name: 'Starter', slug: 'starter', equines: 5, storage: '2 GB', monthly: 39, yearly: 390, users: 312, active: true },
-  { id: 'p3', name: 'Pro', slug: 'pro', equines: 15, storage: '10 GB', monthly: 89, yearly: 890, users: 187, active: true },
-  { id: 'p4', name: 'Haras', slug: 'haras', equines: -1, storage: '30 GB', monthly: 189, yearly: 1890, users: 89, active: true },
-];
+interface BillingSettings {
+  monthly_price_cents: number;
+  currency: string;
+  trial_days: number;
+  product_name: string;
+}
 
 const COUPONS = [
   { id: 'c1', code: 'LANCAMENTO30', type: 'percent', value: 30, uses: 47, maxUses: 100, valid: '31/12/2026', active: true },
@@ -51,18 +54,20 @@ const COUPONS = [
   { id: 'c4', code: 'NATAL2025', type: 'percent', value: 40, uses: 156, maxUses: 200, valid: '31/01/2026', active: false },
 ];
 
-const planCfg: Record<string, { bg: string; text: string }> = {
-  Gratuito: { bg: C.muted_bg, text: C.muted },
-  Starter: { bg: C.blueLight, text: C.blueText },
-  Pro: { bg: C.greenLight, text: C.green },
-  Haras: { bg: C.purpleLight, text: C.purpleText },
+const subStatusCfg: Record<string, { label: string; bg: string; text: string }> = {
+  active:              { label: 'Ativo',              bg: 'hsl(142 71% 45% / 0.12)', text: 'hsl(142 71% 28%)' },
+  trialing:            { label: 'Período de teste',   bg: C.blueLight,               text: C.blueText },
+  past_due:            { label: 'Em atraso',          bg: C.amberLight,              text: C.amberText },
+  unpaid:              { label: 'Não pago',           bg: C.amberLight,              text: C.amberText },
+  incomplete:          { label: 'Pendente',           bg: C.amberLight,              text: C.amberText },
+  incomplete_expired:  { label: 'Expirado',           bg: C.redLight,                text: C.redText },
+  canceled:            { label: 'Cancelado',          bg: C.redLight,                text: C.redText },
 };
 
-const subStatusCfg: Record<string, { label: string; bg: string; text: string }> = {
-  ACTIVE: { label: 'Ativo', bg: 'hsl(142 71% 45% / 0.12)', text: 'hsl(142 71% 28%)' },
-  PAST_DUE: { label: 'Em atraso', bg: C.amberLight, text: C.amberText },
-  CANCELED: { label: 'Cancelado', bg: C.redLight, text: C.redText },
-};
+function formatMoney(cents: number | null, currency: string | null): string {
+  if (cents == null) return '—';
+  return (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: (currency ?? 'brl').toUpperCase() });
+}
 
 function TabBtn({ id, label, current, onClick }: { id: SubTab; label: string; current: SubTab; onClick: (t: SubTab) => void }) {
   const active = id === current;
@@ -74,17 +79,40 @@ function TabBtn({ id, label, current, onClick }: { id: SubTab; label: string; cu
 }
 
 function AssinaturasTab() {
+  const supabase = createClient();
   const [search, setSearch] = useState('');
-  const filtered = search ? SUBSCRIPTIONS.filter(s => s.user.toLowerCase().includes(search.toLowerCase()) || s.email.toLowerCase().includes(search.toLowerCase())) : SUBSCRIPTIONS;
-  const mrr = SUBSCRIPTIONS.filter(s => s.status === 'ACTIVE').reduce((sum, s) => sum + (s.billing === 'Anual' ? s.amount / 12 : s.amount), 0);
+  const [rows, setRows] = useState<SubscriptionRow[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function load() {
+      const { data } = await supabase
+        .from('subscriptions')
+        .select('id, owner_name, owner_email, farm_name, status, price_cents, currency, current_period_end, cancel_at_period_end, created_at')
+        .order('created_at', { ascending: false });
+      setRows((data as SubscriptionRow[]) ?? []);
+      setLoading(false);
+    }
+    load();
+  }, []);
+
+  const filtered = search
+    ? rows.filter(s => (s.owner_name ?? '').toLowerCase().includes(search.toLowerCase()) || (s.owner_email ?? '').toLowerCase().includes(search.toLowerCase()))
+    : rows;
+
+  const mrr = rows.filter(s => s.status === 'active').reduce((sum, s) => sum + (s.price_cents ?? 0), 0) / 100;
+  const activeCount = rows.filter(s => s.status === 'active' || s.status === 'trialing').length;
+  const pastDueCount = rows.filter(s => s.status === 'past_due' || s.status === 'unpaid' || s.status === 'incomplete').length;
+
+  if (loading) return <p style={{ color: C.muted, fontSize: '0.875rem', padding: '2rem 0' }}>Carregando…</p>;
 
   return (
     <div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12, marginBottom: '1.25rem' }}>
         {[
-          { label: 'MRR', value: `R$ ${mrr.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`, color: C.green, bg: C.greenLight },
-          { label: 'Assinaturas Ativas', value: String(SUBSCRIPTIONS.filter(s => s.status === 'ACTIVE').length), color: 'hsl(142 71% 28%)', bg: 'hsl(142 71% 45% / 0.12)' },
-          { label: 'Em Atraso', value: String(SUBSCRIPTIONS.filter(s => s.status === 'PAST_DUE').length), color: C.amberText, bg: C.amberLight },
+          { label: 'MRR', value: mrr.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }), color: C.green, bg: C.greenLight },
+          { label: 'Assinaturas Ativas', value: String(activeCount), color: 'hsl(142 71% 28%)', bg: 'hsl(142 71% 45% / 0.12)' },
+          { label: 'Em Atraso', value: String(pastDueCount), color: C.amberText, bg: C.amberLight },
         ].map(m => (
           <div key={m.label} style={{ padding: '1rem', borderRadius: '0.875rem', background: m.bg }}>
             <p style={{ fontSize: '1.4rem', fontWeight: 900, color: m.color }}>{m.value}</p>
@@ -106,30 +134,37 @@ function AssinaturasTab() {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
-                {['Assinante', 'Plano', 'Status', 'Ciclo', 'Valor', 'Próx. cobrança'].map(h => (
+                {['Assinante', 'Status', 'Valor', 'Próx. cobrança'].map(h => (
                   <th key={h} style={{ textAlign: 'left', fontSize: '0.6875rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: C.muted, padding: '10px 12px', borderBottom: `1px solid ${C.border}`, whiteSpace: 'nowrap' }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
+              {filtered.length === 0 && (
+                <tr>
+                  <td colSpan={4} style={{ padding: '2rem 12px', textAlign: 'center', color: C.muted, fontSize: '0.8125rem' }}>
+                    Nenhuma assinatura ainda.
+                  </td>
+                </tr>
+              )}
               {filtered.map(s => {
-                const pc = planCfg[s.plan] ?? { bg: C.muted_bg, text: C.muted };
                 const sc = subStatusCfg[s.status] ?? { label: s.status, bg: C.muted_bg, text: C.muted };
                 return (
                   <tr key={s.id} style={{ cursor: 'default' }}>
                     <td style={{ padding: '11px 12px', borderBottom: `1px solid ${C.border}` }}>
-                      <p style={{ fontSize: '0.8125rem', fontWeight: 600, color: C.fg }}>{s.user}</p>
-                      <p style={{ fontSize: '0.6875rem', color: C.muted }}>{s.email}</p>
-                    </td>
-                    <td style={{ padding: '11px 12px', borderBottom: `1px solid ${C.border}` }}>
-                      <span style={{ fontSize: '0.6875rem', fontWeight: 700, padding: '2px 9px', borderRadius: 999, background: pc.bg, color: pc.text }}>{s.plan}</span>
+                      <p style={{ fontSize: '0.8125rem', fontWeight: 600, color: C.fg }}>{s.owner_name ?? s.farm_name ?? '—'}</p>
+                      <p style={{ fontSize: '0.6875rem', color: C.muted }}>{s.owner_email ?? '—'}</p>
                     </td>
                     <td style={{ padding: '11px 12px', borderBottom: `1px solid ${C.border}` }}>
                       <span style={{ fontSize: '0.6875rem', fontWeight: 700, padding: '2px 9px', borderRadius: 999, background: sc.bg, color: sc.text }}>{sc.label}</span>
+                      {s.cancel_at_period_end && (
+                        <span style={{ marginLeft: 6, fontSize: '0.625rem', color: C.muted }}>cancela ao fim do período</span>
+                      )}
                     </td>
-                    <td style={{ padding: '11px 12px', borderBottom: `1px solid ${C.border}`, fontSize: '0.8125rem', color: C.muted }}>{s.billing}</td>
-                    <td style={{ padding: '11px 12px', borderBottom: `1px solid ${C.border}`, fontSize: '0.875rem', fontWeight: 700, color: C.fg }}>R$ {s.amount.toLocaleString('pt-BR')}</td>
-                    <td style={{ padding: '11px 12px', borderBottom: `1px solid ${C.border}`, fontSize: '0.8125rem', color: C.muted }}>{s.nextBilling}</td>
+                    <td style={{ padding: '11px 12px', borderBottom: `1px solid ${C.border}`, fontSize: '0.875rem', fontWeight: 700, color: C.fg }}>{formatMoney(s.price_cents, s.currency)}</td>
+                    <td style={{ padding: '11px 12px', borderBottom: `1px solid ${C.border}`, fontSize: '0.8125rem', color: C.muted }}>
+                      {s.current_period_end ? new Date(s.current_period_end).toLocaleDateString('pt-BR') : '—'}
+                    </td>
                   </tr>
                 );
               })}
@@ -141,79 +176,83 @@ function AssinaturasTab() {
   );
 }
 
-function PlanosTab() {
-  const [plans, setPlans] = useState(PLANS_DATA);
-  const [editing, setEditing] = useState<string | null>(null);
-  const [editVals, setEditVals] = useState<{ monthly: string; yearly: string }>({ monthly: '', yearly: '' });
+function PrecoTab() {
+  const supabase = createClient();
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [productName, setProductName] = useState('EquiCore Haras');
+  const [priceReais, setPriceReais] = useState('0');
+  const [trialDays, setTrialDays] = useState('0');
 
-  function startEdit(p: typeof PLANS_DATA[0]) {
-    setEditing(p.id);
-    setEditVals({ monthly: String(p.monthly), yearly: String(p.yearly) });
+  useEffect(() => {
+    async function load() {
+      const { data } = await supabase
+        .from('billing_settings')
+        .select('monthly_price_cents, currency, trial_days, product_name')
+        .eq('id', 1)
+        .maybeSingle();
+      if (data) {
+        setProductName(data.product_name);
+        setPriceReais((data.monthly_price_cents / 100).toFixed(2));
+        setTrialDays(String(data.trial_days));
+      }
+      setLoading(false);
+    }
+    load();
+  }, []);
+
+  async function save() {
+    setSaving(true);
+    const cents = Math.round(Number(priceReais.replace(',', '.')) * 100);
+    const { error } = await supabase
+      .from('billing_settings')
+      .update({ monthly_price_cents: cents, trial_days: Number(trialDays), product_name: productName })
+      .eq('id', 1);
+    setSaving(false);
+    if (!error) {
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    }
   }
 
-  function saveEdit(id: string) {
-    setPlans(prev => prev.map(p => p.id === id ? { ...p, monthly: Number(editVals.monthly), yearly: Number(editVals.yearly) } : p));
-    setEditing(null);
-  }
+  const inputStyle: React.CSSProperties = { width: '100%', border: `1px solid ${C.border}`, borderRadius: 8, padding: '0.5625rem 0.75rem', fontSize: '0.875rem', background: C.bg, color: C.fg, outline: 'none', boxSizing: 'border-box' };
+
+  if (loading) return <p style={{ color: C.muted, fontSize: '0.875rem', padding: '2rem 0' }}>Carregando…</p>;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      {plans.map(p => {
-        const pc = planCfg[p.name] ?? { bg: C.muted_bg, text: C.muted };
-        const isEditing = editing === p.id;
-        return (
-          <div key={p.id} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '1rem', padding: '1.25rem' }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1 }}>
-                <div style={{ width: 44, height: 44, borderRadius: '0.75rem', background: pc.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <span style={{ fontSize: '1.125rem', fontWeight: 900, color: pc.text }}>{p.name[0]}</span>
-                </div>
-                <div>
-                  <p style={{ fontSize: '1rem', fontWeight: 800, color: C.fg }}>{p.name}</p>
-                  <p style={{ fontSize: '0.75rem', color: C.muted }}>
-                    {p.equines === -1 ? 'Ilimitado' : p.equines} equinos · {p.storage} · {p.users} assinantes
-                  </p>
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', gap: 24, alignItems: 'center', flexWrap: 'wrap' }}>
-                {isEditing ? (
-                  <>
-                    <div>
-                      <p style={{ fontSize: '0.6875rem', color: C.muted, fontWeight: 600, marginBottom: 4 }}>Mensal (R$)</p>
-                      <input type="number" value={editVals.monthly} onChange={e => setEditVals(v => ({ ...v, monthly: e.target.value }))}
-                        style={{ width: 90, padding: '6px 10px', borderRadius: 8, border: `1.5px solid ${C.green}`, background: C.bg, color: C.fg, fontSize: '0.875rem', fontWeight: 700, outline: 'none' }} />
-                    </div>
-                    <div>
-                      <p style={{ fontSize: '0.6875rem', color: C.muted, fontWeight: 600, marginBottom: 4 }}>Anual (R$)</p>
-                      <input type="number" value={editVals.yearly} onChange={e => setEditVals(v => ({ ...v, yearly: e.target.value }))}
-                        style={{ width: 90, padding: '6px 10px', borderRadius: 8, border: `1.5px solid ${C.green}`, background: C.bg, color: C.fg, fontSize: '0.875rem', fontWeight: 700, outline: 'none' }} />
-                    </div>
-                    <div style={{ display: 'flex', gap: 8, marginTop: 18 }}>
-                      <button onClick={() => saveEdit(p.id)} style={{ padding: '6px 16px', borderRadius: 8, background: C.green, color: '#fff', fontWeight: 700, fontSize: '0.8125rem', border: 'none', cursor: 'pointer' }}>Salvar</button>
-                      <button onClick={() => setEditing(null)} style={{ padding: '6px 12px', borderRadius: 8, background: C.muted_bg, color: C.fg, fontWeight: 600, fontSize: '0.8125rem', border: 'none', cursor: 'pointer' }}>Cancelar</button>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div style={{ textAlign: 'right' }}>
-                      <p style={{ fontSize: '0.6875rem', color: C.muted, fontWeight: 600 }}>Mensal</p>
-                      <p style={{ fontSize: '1.125rem', fontWeight: 900, color: C.fg }}>{p.monthly === 0 ? 'Grátis' : `R$ ${p.monthly}`}</p>
-                    </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <p style={{ fontSize: '0.6875rem', color: C.muted, fontWeight: 600 }}>Anual</p>
-                      <p style={{ fontSize: '1.125rem', fontWeight: 900, color: C.fg }}>{p.yearly === 0 ? 'Grátis' : `R$ ${p.yearly}`}</p>
-                    </div>
-                    <button onClick={() => startEdit(p)} style={{ padding: '6px 16px', borderRadius: 8, background: C.greenLight, color: C.green, fontWeight: 700, fontSize: '0.8125rem', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                      Editar preços
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
+    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '1rem', overflow: 'hidden', maxWidth: 480 }}>
+      <div style={{ padding: '1.25rem 1.5rem', borderBottom: `1px solid ${C.border}` }}>
+        <p style={{ fontSize: '1rem', fontWeight: 800, color: C.fg }}>Valor da assinatura</p>
+        <p style={{ fontSize: '0.8125rem', color: C.muted, marginTop: 2 }}>
+          Cobrado mensalmente do dono do haras. O veterinário nunca é cobrado.
+        </p>
+      </div>
+      <div style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+        <div>
+          <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 700, color: C.fg, marginBottom: 6 }}>Nome do produto</label>
+          <input value={productName} onChange={e => setProductName(e.target.value)} style={inputStyle} />
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+          <div>
+            <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 700, color: C.fg, marginBottom: 6 }}>Preço mensal (R$)</label>
+            <input type="number" min="0" step="0.01" value={priceReais} onChange={e => setPriceReais(e.target.value)} style={inputStyle} />
           </div>
-        );
-      })}
+          <div>
+            <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 700, color: C.fg, marginBottom: 6 }}>Dias de teste grátis</label>
+            <input type="number" min="0" max="90" value={trialDays} onChange={e => setTrialDays(e.target.value)} style={inputStyle} />
+          </div>
+        </div>
+        <p style={{ fontSize: '0.75rem', color: C.muted }}>
+          Assinantes ativos mantêm o valor já contratado — a mudança vale para novas assinaturas a partir de agora.
+        </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <button onClick={save} disabled={saving} style={{ padding: '0.5625rem 1.25rem', borderRadius: 8, background: C.green, color: '#fff', fontWeight: 700, fontSize: '0.875rem', border: 'none', cursor: saving ? 'default' : 'pointer', opacity: saving ? 0.7 : 1 }}>
+            {saving ? 'Salvando…' : 'Salvar'}
+          </button>
+          {saved && <span style={{ fontSize: '0.8125rem', color: C.green, fontWeight: 600 }}>Salvo</span>}
+        </div>
+      </div>
     </div>
   );
 }
@@ -320,15 +359,15 @@ export default function AssinaturasAdmin() {
     <div>
       <div style={{ marginBottom: '1.5rem' }}>
         <h1 style={{ fontSize: '1.25rem', fontWeight: 800, color: C.fg, letterSpacing: '-0.02em' }}>Assinaturas</h1>
-        <p style={{ fontSize: '0.8125rem', color: C.muted, marginTop: 2 }}>Gerenciamento de planos, cobranças e cupons</p>
+        <p style={{ fontSize: '0.8125rem', color: C.muted, marginTop: 2 }}>Gerenciamento de assinatura, preço e cupons</p>
       </div>
       <div style={{ display: 'flex', gap: 4, padding: 4, background: C.muted_bg, borderRadius: '0.875rem', width: 'fit-content', marginBottom: '1.5rem' }}>
         <TabBtn id="assinaturas" label="Assinaturas" current={tab} onClick={setTab} />
-        <TabBtn id="planos" label="Planos" current={tab} onClick={setTab} />
+        <TabBtn id="planos" label="Preço" current={tab} onClick={setTab} />
         <TabBtn id="cupons" label="Cupons" current={tab} onClick={setTab} />
       </div>
       {tab === 'assinaturas' && <AssinaturasTab />}
-      {tab === 'planos' && <PlanosTab />}
+      {tab === 'planos' && <PrecoTab />}
       {tab === 'cupons' && <CuponsTab />}
     </div>
   );

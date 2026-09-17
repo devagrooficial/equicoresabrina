@@ -43,7 +43,7 @@ const PLAN_FEATURES: Record<string, { name: string; equines: string; storage: st
   free:    { name: 'Gratuito', equines: '2 equinos',    storage: '500 MB',   color: C.muted,                     bg: C.muted_bg,                        maxEquines: 2,     maxStorage: 0.5,  price: 'R$ 0' },
   starter: { name: 'Starter',  equines: '5 equinos',    storage: '2 GB',     color: 'hsl(217 91% 40%)',           bg: 'hsl(217 91% 60% / 0.08)',         maxEquines: 5,     maxStorage: 2,    price: 'R$ 39/mês' },
   pro:     { name: 'Pro',      equines: '15 equinos',   storage: '10 GB',    color: C.green,                     bg: C.greenLight,                      maxEquines: 15,    maxStorage: 10,   price: 'R$ 89/mês' },
-  haras:   { name: 'Haras',    equines: 'Ilimitado',    storage: '30 GB',    color: 'hsl(280 60% 40%)',           bg: 'hsl(280 60% 50% / 0.08)',         maxEquines: 9999,  maxStorage: 30,   price: 'R$ 189/mês' },
+  haras:   { name: 'Haras',    equines: 'Ilimitado',    storage: '30 GB',    color: 'hsl(280 60% 40%)',           bg: 'hsl(280 60% 50% / 0.08)',         maxEquines: 9999,  maxStorage: 30,   price: 'Assinatura ativa' },
 };
 
 const BR_STATES = ['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'];
@@ -336,17 +336,14 @@ function PlanoTab({ userId }: { userId: string }) {
         </div>
       </SectionCard>
 
-      <SectionCard title="Últimas faturas">
-        <p style={{ fontSize: '0.8125rem', color: C.muted }}>Histórico de faturas disponível em breve.</p>
+      <SectionCard title="Faturamento">
+        <p style={{ fontSize: '0.8125rem', color: C.muted }}>
+          Faturas, forma de pagamento e cancelamento são gerenciados na página de assinatura.
+        </p>
+        <a href="/dashboard/assinatura" style={{ display: 'inline-block', marginTop: 10, padding: '0.5rem 1.125rem', borderRadius: '0.625rem', border: `1px solid ${C.border}`, color: C.fg, fontSize: '0.8125rem', fontWeight: 600, textDecoration: 'none', background: C.muted_bg }}>
+          Ir para Assinatura
+        </a>
       </SectionCard>
-
-      <div style={{ padding: '1rem', borderRadius: '0.75rem', background: C.redLight, border: `1px solid ${C.red}33` }}>
-        <p style={{ fontSize: '0.875rem', fontWeight: 700, color: C.redText, marginBottom: 4 }}>Cancelar assinatura</p>
-        <p style={{ fontSize: '0.8125rem', color: C.redText }}>Ao cancelar, você manterá acesso até o fim do período atual. Seus dados ficam salvos por 30 dias.</p>
-        <button style={{ marginTop: 10, padding: '0.5rem 1rem', borderRadius: '0.625rem', background: 'transparent', border: `1px solid ${C.red}`, color: C.redText, fontSize: '0.8125rem', fontWeight: 600, cursor: 'pointer' }}>
-          Cancelar assinatura
-        </button>
-      </div>
     </div>
   );
 }
