@@ -205,6 +205,21 @@ export default function VetRegistros({ initialTab }: { initialTab?: string | nul
       }
       return;
     }
+
+    // Limpeza best-effort dos arquivos do equino no bucket "docs" — só depois
+    // de confirmar que a linha foi excluída, pra nunca apagar arquivo de um
+    // registro que continua existindo.
+    if (tab === 'equinos') {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const prefix = `${user.id}/equinos/${id}`;
+        const { data: files } = await supabase.storage.from('docs').list(prefix);
+        if (files?.length) {
+          await supabase.storage.from('docs').remove(files.map(f => `${prefix}/${f.name}`));
+        }
+      }
+    }
+
     loadAll();
   }
 

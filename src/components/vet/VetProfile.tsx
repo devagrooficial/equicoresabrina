@@ -59,6 +59,7 @@ export default function VetProfile({
   const [pwdError, setPwdError] = useState('');
   const [pwdSaved, setPwdSaved] = useState(false);
   const [pwdSaving, setPwdSaving] = useState(false);
+  const [avatarError, setAvatarError] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
 
   const fs = (field: string): React.CSSProperties =>
@@ -84,27 +85,55 @@ export default function VetProfile({
   async function handleAvatarChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
+    setAvatarError('');
+
+    if (!['image/jpeg', 'image/png', 'image/heic'].includes(file.type)) {
+      setAvatarError('Formato inválido. Use JPG, PNG ou HEIC.');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setAvatarError('Arquivo muito grande. Máx. 5 MB.');
+      return;
+    }
+
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
     const ext  = file.name.split('.').pop();
-    const path = `avatars/${user.id}.${ext}`;
+    // Mesma convenção do lado do dono: uid como primeiro segmento do path.
+    const path = `${user.id}/avatar.${ext}`;
     const { error: upErr } = await supabase.storage.from('avatars').upload(path, file, { upsert: true });
-    if (upErr) return;
+    if (upErr) {
+      setAvatarError('Erro ao enviar foto. Tente novamente.');
+      return;
+    }
 
     const { data: { publicUrl } } = supabase.storage.from('avatars').getPublicUrl(path);
-    await supabase.from('profiles').update({ avatar_url: publicUrl }).eq('id', user.id);
-    setAvatar(publicUrl);
+    const url = `${publicUrl}?t=${Date.now()}`;
+    await supabase.from('profiles').update({ avatar_url: url }).eq('id', user.id);
+    setAvatar(url);
   }
 
   async function handleChangePassword(e: React.FormEvent) {
     e.preventDefault();
     setPwdError('');
+    if (!pwdCurrent)           { setPwdError('Informe a senha atual'); return; }
     if (pwdNew !== pwdConfirm) { setPwdError('As senhas não coincidem'); return; }
     if (pwdNew.length < 8)     { setPwdError('Mínimo 8 caracteres'); return; }
     setPwdSaving(true);
     const supabase = createClient();
+
+    // Reautentica com a senha atual antes de trocar — sem isso, o campo
+    // "senha atual" era só decorativo e qualquer sessão logada podia trocar
+    // a senha sem confirmar a atual.
+    const { error: reauthError } = await supabase.auth.signInWithPassword({ email: initialEmail, password: pwdCurrent });
+    if (reauthError) {
+      setPwdSaving(false);
+      setPwdError('Senha atual incorreta');
+      return;
+    }
+
     const { error } = await supabase.auth.updateUser({ password: pwdNew });
     setPwdSaving(false);
     if (error) { setPwdError(error.message); return; }
@@ -135,7 +164,7 @@ export default function VetProfile({
             : getInitials(name)
           }
         </button>
-        <input ref={fileRef} type="file" accept="image/*" onChange={handleAvatarChange} style={{ display: 'none' }} />
+        <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/heic" onChange={handleAvatarChange} style={{ display: 'none' }} />
         <div>
           <h1 style={{ fontSize: '1.25rem', fontWeight: 800, color: C.fg, marginBottom: '0.25rem' }}>
             {name || 'Veterinário'}
@@ -159,6 +188,9 @@ export default function VetProfile({
             <p style={{ fontSize: '0.75rem', color: C.muted, marginTop: '0.25rem' }}>
               Desde {new Date(createdAt).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
             </p>
+          )}
+          {avatarError && (
+            <p style={{ fontSize: '0.75rem', color: C.red, marginTop: '0.25rem' }}>{avatarError}</p>
           )}
         </div>
       </div>

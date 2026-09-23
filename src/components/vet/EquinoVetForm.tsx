@@ -34,6 +34,7 @@ export default function EquinoVetForm({ editId = null }: Props) {
   const [ownerId, setOwnerId]               = useState('');
   const [propertyId, setPropertyId]         = useState('');
   const [registryBrand, setRegistryBrand]   = useState('');
+  const [chip, setChip]                     = useState('');
   const [species, setSpecies]               = useState('');
   const [breed, setBreed]                   = useState('');
   const [coat, setCoat]                     = useState('');
@@ -95,6 +96,7 @@ export default function EquinoVetForm({ editId = null }: Props) {
           setOwnerId(data.owner_id ?? '');
           setPropertyId(data.property_id ?? '');
           setRegistryBrand(data.registry_brand ?? '');
+          setChip(data.chip ?? '');
           setSpecies(data.species ?? '');
           setBreed(data.breed ?? '');
           setCoat(data.coat ?? '');
@@ -210,15 +212,17 @@ export default function EquinoVetForm({ editId = null }: Props) {
     ext: string,
     existingPaths: string[],  // paths completos já existentes no storage
   ): Promise<string> {
-    // Remove arquivos anteriores do mesmo slot (novo e legado)
+    // Sobe o novo arquivo primeiro — só remove a versão anterior depois de
+    // confirmar sucesso, pra nunca ficar sem nenhuma das duas se o upload falhar.
+    const path = `${currentVetId}/equinos/${equineId}/${baseName}-${Date.now()}.${ext}`;
+    const { error: upErr } = await supabase.storage.from('docs').upload(path, body, { contentType });
+    if (upErr) throw new Error('Falha ao enviar arquivo. Tente novamente.');
+
     const toDelete = existingPaths.filter(p =>
       p.endsWith(`/${baseName}`) || p.includes(`/${baseName}-`)
     );
     if (toDelete.length) await supabase.storage.from('docs').remove(toDelete);
 
-    const path = `${currentVetId}/equinos/${equineId}/${baseName}-${Date.now()}.${ext}`;
-    const { error: upErr } = await supabase.storage.from('docs').upload(path, body, { contentType });
-    if (upErr) throw new Error('Falha ao enviar arquivo. Tente novamente.');
     return path;
   }
 
@@ -330,6 +334,7 @@ export default function EquinoVetForm({ editId = null }: Props) {
         property_id:    propertyId || null,
         name:           name.trim(),
         registry_brand: registryBrand.trim() || null,
+        chip:           chip.trim() || null,
         marca_fogo_url: marcaFogoPath,
         species:        species || null,
         breed:          breed || null,
@@ -436,6 +441,10 @@ export default function EquinoVetForm({ editId = null }: Props) {
 
           <Field label="Registro/Marca" className="md:col-span-4">
             <input type="text" value={registryBrand} onChange={e => setRegistryBrand(e.target.value)} style={inputStyle} />
+          </Field>
+
+          <Field label="Nº Chip" hint="opcional" className="md:col-span-4">
+            <input type="text" value={chip} onChange={e => setChip(e.target.value)} style={inputStyle} />
           </Field>
 
           <Field label="Propriedade" hint="opcional" className="md:col-span-4">
