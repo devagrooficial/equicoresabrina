@@ -53,6 +53,45 @@ export function calculateAlertStatus(dueDate: string | null): AlertStatus {
   return { key, ...STATUS_META[key], daysRemaining };
 }
 
+const RANK: Record<Exclude<AlertStatusKey, 'PENDENTE'>, number> = {
+  VENCIDA: 5,
+  CRITICO: 4,
+  URGENTE: 3,
+  ATENCAO: 2,
+};
+
+export interface EquineAlertLike {
+  due_date: string | null;
+  status_override: string | null;
+  resolved_at: string | null;
+  template: { periodicity_months: number | null } | null;
+}
+
+export type EquineHealthStatus = 'healthy' | 'attention' | 'urgent' | 'critical';
+
+/** Rank de gravidade de um alerta (-1 = não se aplica, 0 = em dia, 5 = pior). */
+function alertRank(a: EquineAlertLike): number {
+  if (a.status_override === 'NAO_POSSUI') return -1;
+  if (a.template?.periodicity_months == null) return a.resolved_at ? 0 : 1;
+  if (!a.due_date) return 1;
+  const key = calculateAlertStatus(a.due_date).key;
+  if (key === 'PENDENTE') return 0;
+  return RANK[key];
+}
+
+/**
+ * Deriva o status de saúde de um equino (e sua contagem de alertas em
+ * aberto) a partir dos alertas ao vivo — `equinos.health_status` nunca é
+ * escrito por nenhum trigger/código, então não pode ser usado como fonte
+ * da verdade.
+ */
+export function computeEquineHealth(alerts: EquineAlertLike[]): { status: EquineHealthStatus; alertsCount: number } {
+  const worst = alerts.reduce((max, a) => Math.max(max, alertRank(a)), 0);
+  const alertsCount = alerts.filter(a => alertRank(a) >= 1).length;
+  const status: EquineHealthStatus = worst >= 4 ? 'critical' : worst === 3 ? 'urgent' : worst === 2 ? 'attention' : 'healthy';
+  return { status, alertsCount };
+}
+
 /** Adiciona N meses a uma data ISO (YYYY-MM-DD) e retorna no mesmo formato. */
 export function addMonths(isoDate: string, months: number): string {
   const [y, m, d] = isoDate.slice(0, 10).split('-').map(Number);

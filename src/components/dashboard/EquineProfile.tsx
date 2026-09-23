@@ -342,7 +342,6 @@ function GenealogyTree({ equine }: { equine: EquineProfileData }) {
               <span style={{ fontSize: 9, color: C.muted, fontWeight: 500 }}>{l.label}</span>
             </div>
           ))}
-          <p style={{ fontSize: 9, color: C.muted, marginTop: 4, fontWeight: 600 }}>Reg.: ABQM 2019/00458</p>
         </div>
         </div>{/* end min-w inner */}
       </div>{/* end overflow-x-auto */}

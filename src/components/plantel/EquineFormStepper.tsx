@@ -111,9 +111,11 @@ const PURPOSE_OPTIONS = [
 const STEPS = [
   { id: 1, label: 'Identificação', short: 'ID' },
   { id: 2, label: 'Registros', short: 'REG' },
-  { id: 3, label: 'Físico', short: 'FÍS' },
-  { id: 4, label: 'Genealogia', short: 'GEN' },
-  { id: 5, label: 'Revisão', short: 'REV' },
+  { id: 3, label: 'Atividade', short: 'ATIV' },
+  { id: 4, label: 'Nutrição', short: 'NUTR' },
+  { id: 5, label: 'Físico', short: 'FÍS' },
+  { id: 6, label: 'Genealogia', short: 'GEN' },
+  { id: 7, label: 'Revisão', short: 'REV' },
 ];
 
 type FormData = {
@@ -748,7 +750,7 @@ export default function EquineFormStepper({ initialData, equineId }: { initialDa
   }
 
   const isFirst = step === 1;
-  const isLast = step === 5;
+  const isLast = step === 7;
 
   return (
     <div style={{ maxWidth: 680, margin: '0 auto' }}>
@@ -801,7 +803,7 @@ export default function EquineFormStepper({ initialData, equineId }: { initialDa
       <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '1.25rem', padding: '1.75rem', marginBottom: '1.25rem' }}>
         <p style={{ fontSize: '0.6875rem', fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: C.muted, marginBottom: '1.25rem' }}>
           ETAPA {step} — {STEPS[step - 1].label}
-          {step === 4 && <span style={{ marginLeft: 8, background: C.greenLight, color: C.green, padding: '2px 8px', borderRadius: 999, fontSize: '0.625rem', fontWeight: 700 }}>OPCIONAL</span>}
+          {step === 6 && <span style={{ marginLeft: 8, background: C.greenLight, color: C.green, padding: '2px 8px', borderRadius: 999, fontSize: '0.625rem', fontWeight: 700 }}>OPCIONAL</span>}
         </p>
         {step === 1 && (
           <>
@@ -818,9 +820,11 @@ export default function EquineFormStepper({ initialData, equineId }: { initialDa
           </>
         )}
         {step === 2 && <Step2 f={form} set={setField} />}
-        {step === 3 && <Step5 f={form} set={setField} />}
-        {step === 4 && <Step6 f={form} set={setField} />}
-        {step === 5 && <Step7 f={form} />}
+        {step === 3 && <Step3 f={form} set={setField} />}
+        {step === 4 && <Step4 f={form} set={setField} />}
+        {step === 5 && <Step5 f={form} set={setField} />}
+        {step === 6 && <Step6 f={form} set={setField} />}
+        {step === 7 && <Step7 f={form} />}
       </div>
 
       {/* Erros de validação / save */}
@@ -855,14 +859,14 @@ export default function EquineFormStepper({ initialData, equineId }: { initialDa
           </button>
         ) : (
           <div style={{ display: 'flex', gap: 8 }}>
-                {step === 4 && (
-              <button type="button" onClick={() => setStep(5)} style={{ padding: '0.6875rem 1rem', borderRadius: '0.625rem', background: 'transparent', color: C.muted, fontWeight: 500, fontSize: '0.875rem', border: `1px solid ${C.border}`, cursor: 'pointer' }}>
+                {step === 6 && (
+              <button type="button" onClick={() => setStep(7)} style={{ padding: '0.6875rem 1rem', borderRadius: '0.625rem', background: 'transparent', color: C.muted, fontWeight: 500, fontSize: '0.875rem', border: `1px solid ${C.border}`, cursor: 'pointer' }}>
                 Pular
               </button>
             )}
             <button
               type="button"
-              onClick={() => setStep(s => Math.min(5, s + 1))}
+              onClick={() => setStep(s => Math.min(7, s + 1))}
               style={{ padding: '0.6875rem 1.5rem', borderRadius: '0.625rem', background: C.green, color: '#fff', fontWeight: 600, fontSize: '0.875rem', border: 'none', cursor: 'pointer' }}
             >
               Próximo →

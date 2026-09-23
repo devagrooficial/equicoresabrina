@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { createClient } from '../../lib/supabase';
+import { computeEquineHealth, type EquineAlertLike } from '../../lib/alertStatus';
 
 const C = {
   green: 'hsl(168 83% 29%)',
@@ -71,9 +72,10 @@ function calcAge(birthDate: string | null, estimatedAge: number | null): string 
   return '—';
 }
 
-function dbToEquineData(row: any): EquineData {
+function dbToEquineData(row: any, alerts: EquineAlertLike[]): EquineData {
   const reg = [row.reg_abqm, row.reg_abccm, row.reg_abpsi, row.reg_abccc, row.reg_other].find(Boolean) ?? '';
-  const statusLabels: Record<string, string> = { healthy: 'Saúde em dia', attention: 'Atenção', urgent: 'Urgente', critical: 'Crítico' };
+  const statusLabels: Record<EquineStatus, string> = { healthy: 'Saúde em dia', attention: 'Atenção', urgent: 'Urgente', critical: 'Crítico' };
+  const { status, alertsCount } = computeEquineHealth(alerts);
   return {
     id: row.id,
     name: row.name,
@@ -82,9 +84,9 @@ function dbToEquineData(row: any): EquineData {
     sex: SEX_LABEL[row.sex] ?? row.sex,
     coat: COAT_LABEL[row.coat] ?? row.coat,
     age: calcAge(row.birth_date, row.estimated_age),
-    status: (row.health_status as EquineStatus) ?? 'healthy',
-    statusLabel: statusLabels[row.health_status] ?? 'Saúde em dia',
-    alertsCount: 0,
+    status,
+    statusLabel: statusLabels[status],
+    alertsCount,
     purpose: (row.purpose ?? []).map((p: string) => PURPOSE_LABEL[p] ?? p),
     registration: reg,
     property: row.stable ?? '',
@@ -141,14 +143,19 @@ export default function PlantelList() {
 
   useEffect(() => {
     const supabase = createClient();
-    supabase
-      .from('equinos')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .then(({ data }) => {
-        setEquines((data ?? []).map(dbToEquineData));
-        setLoadingData(false);
-      });
+    Promise.all([
+      supabase.from('equinos').select('*').order('created_at', { ascending: false }),
+      supabase.from('equine_alerts').select('equine_id, due_date, status_override, resolved_at, template:alert_templates(periodicity_months)'),
+    ]).then(([{ data: equinosData }, { data: alertsData }]) => {
+      const alertsByEquine = new Map<string, EquineAlertLike[]>();
+      for (const a of (alertsData as any[]) ?? []) {
+        const list = alertsByEquine.get(a.equine_id) ?? [];
+        list.push(a);
+        alertsByEquine.set(a.equine_id, list);
+      }
+      setEquines((equinosData ?? []).map((row: any) => dbToEquineData(row, alertsByEquine.get(row.id) ?? [])));
+      setLoadingData(false);
+    });
   }, []);
 
   const filtered = useMemo(() => {

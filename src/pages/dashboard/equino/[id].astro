@@ -5,6 +5,7 @@ import Layout from '../../../layouts/Layout.astro';
 import Header from '../../../components/dashboard/Header';
 import { EquineProfile } from '../../../components/dashboard/EquineProfile';
 import { createServerSupabaseClient } from '../../../lib/supabase';
+import { computeEquineHealth } from '../../../lib/alertStatus';
 
 const { id } = Astro.params;
 const responseHeaders = new Headers();
@@ -53,6 +54,9 @@ const alerts = (alertRows ?? []).map((a: any) => ({
 
 const reg = [row.reg_abqm, row.reg_abccm, row.reg_abpsi, row.reg_abccc, row.reg_other].find(Boolean) ?? '';
 
+// equinos.health_status nunca é escrito por nada — computa ao vivo a partir dos alertas.
+const { status: healthStatus } = computeEquineHealth((alertRows as any[]) ?? []);
+
 const equineData = {
   id: row.id,
   name: row.name,
@@ -62,7 +66,7 @@ const equineData = {
   coat: row.coat,
   age: calcAge(row.birth_date, row.estimated_age),
   registration: reg,
-  healthStatus: row.health_status ?? 'healthy',
+  healthStatus,
   coverPhotoUrl: row.cover_photo_url ?? null,
   feedKgDay: row.feed_kg_day,
   feedBrand: row.feed_brand,

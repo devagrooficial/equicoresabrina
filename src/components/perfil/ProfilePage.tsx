@@ -286,7 +286,7 @@ function PlanoTab({ userId }: { userId: string }) {
     async function load() {
       const [{ data: profile }, { count }] = await Promise.all([
         supabase.from('profiles').select('plan').eq('id', userId).single(),
-        supabase.from('equines').select('id', { count: 'exact', head: true }).eq('owner_id', userId),
+        supabase.from('equinos').select('id', { count: 'exact', head: true }).eq('user_id', userId),
       ]);
       if (profile?.plan) setPlanKey(profile.plan);
       setUsedEquines(count ?? 0);
@@ -350,15 +350,56 @@ function PlanoTab({ userId }: { userId: string }) {
 
 // ─── Aba Notificações ──────────────────────────────────────────────────────────
 
-function NotificacoesTab() {
+function NotificacoesTab({ userId }: { userId: string | null }) {
+  const supabase = createClient();
   const [emailEnabled, setEmailEnabled] = useState(true);
   const [pushEnabled, setPushEnabled]   = useState(false);
   const [vaccineDays, setVaccineDays]   = useState([30, 15, 7, 3]);
   const [docDays, setDocDays]           = useState([30, 15, 7]);
+  const [loading, setLoading]           = useState(true);
+  const [saving, setSaving]             = useState(false);
+  const [saved, setSaved]               = useState(false);
+
+  useEffect(() => {
+    if (!userId) return;
+    async function load() {
+      const { data } = await supabase
+        .from('profiles')
+        .select('notify_email, notify_push, vaccine_reminder_days, doc_reminder_days')
+        .eq('id', userId)
+        .maybeSingle();
+      if (data) {
+        setEmailEnabled(data.notify_email ?? true);
+        setPushEnabled(data.notify_push ?? false);
+        if (data.vaccine_reminder_days) setVaccineDays(data.vaccine_reminder_days);
+        if (data.doc_reminder_days) setDocDays(data.doc_reminder_days);
+      }
+      setLoading(false);
+    }
+    load();
+  }, [userId]);
+
+  async function savePreferences() {
+    if (!userId) return;
+    setSaving(true);
+    const { error } = await supabase.from('profiles').update({
+      notify_email: emailEnabled,
+      notify_push: pushEnabled,
+      vaccine_reminder_days: vaccineDays,
+      doc_reminder_days: docDays,
+    }).eq('id', userId);
+    setSaving(false);
+    if (!error) {
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    }
+  }
 
   function toggleDay(list: number[], set: (v: number[]) => void, day: number) {
     set(list.includes(day) ? list.filter(d => d !== day) : [...list, day].sort((a, b) => b - a));
   }
+
+  if (loading) return <p style={{ color: C.muted, fontSize: '0.875rem', padding: '2rem 0' }}>Carregando…</p>;
 
   return (
     <div>
@@ -403,9 +444,12 @@ function NotificacoesTab() {
         </div>
       </SectionCard>
 
-      <button style={{ padding: '0.625rem 1.5rem', borderRadius: '0.75rem', background: C.green, color: '#fff', fontWeight: 600, fontSize: '0.875rem', border: 'none', cursor: 'pointer' }}>
-        Salvar preferências
-      </button>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <button onClick={savePreferences} disabled={saving} style={{ padding: '0.625rem 1.5rem', borderRadius: '0.75rem', background: C.green, color: '#fff', fontWeight: 600, fontSize: '0.875rem', border: 'none', cursor: saving ? 'default' : 'pointer', opacity: saving ? 0.7 : 1 }}>
+          {saving ? 'Salvando…' : 'Salvar preferências'}
+        </button>
+        {saved && <span style={{ fontSize: '0.8125rem', color: C.green, fontWeight: 600 }}>Salvo</span>}
+      </div>
     </div>
   );
 }
@@ -524,7 +568,7 @@ export default function ProfilePage() {
 
       {tab === 'perfil'       && <ProfileTab userId={userId} email={email} />}
       {tab === 'plano'        && <PlanoTab userId={userId} />}
-      {tab === 'notificacoes' && <NotificacoesTab />}
+      {tab === 'notificacoes' && <NotificacoesTab userId={userId} />}
       {tab === 'seguranca'    && <SegurancaTab />}
     </div>
   );

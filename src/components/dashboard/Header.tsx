@@ -20,15 +20,6 @@ function MoonIcon() {
   );
 }
 
-function BellIcon() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
-      <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
-    </svg>
-  );
-}
-
 function MenuIcon() {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -195,21 +186,6 @@ function Avatar({ name, avatarUrl }: { name: string; avatarUrl: string | null })
   );
 }
 
-// ─── Notification Bell ────────────────────────────────────────────────────────
-
-function NotificationBell() {
-  return (
-    <button
-      aria-label="Notificações"
-      className="relative w-9 h-9 flex items-center justify-center rounded-lg transition-all duration-200 text-[hsl(240_3.8%_46.1%)] hover:text-[hsl(240_10%_3.9%)] hover:bg-[hsl(240_4.8%_95.9%)] dark:text-[hsl(240_5%_64.9%)] dark:hover:text-[hsl(0_0%_98%)] dark:hover:bg-[hsl(240_3.7%_15.9%)] cursor-pointer"
-    >
-      <BellIcon />
-      {/* Notification dot */}
-      <span className="absolute top-2 right-2 w-1.5 h-1.5 rounded-full bg-red-500" />
-    </button>
-  );
-}
-
 // ─── Nav links data (used by both desktop & mobile) ──────────────────────────
 
 const NAV_LINKS = [
@@ -285,7 +261,6 @@ export default function Header({ currentPath }: { currentPath?: string }) {
 
           {/* ── Desktop Right Actions ── */}
           <div className="hidden md:flex items-center gap-1 ml-auto">
-            <NotificationBell />
             <ThemeToggle isDark={isDark} onToggle={toggleTheme} />
             <div className="w-px h-5 bg-[hsl(var(--border))] mx-2" />
             <Avatar name={userName} avatarUrl={avatarUrl} />
