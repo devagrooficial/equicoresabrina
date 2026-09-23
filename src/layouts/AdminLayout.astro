@@ -1,12 +1,25 @@
 ---
 import '../styles/global.css';
 import AdminSidebar from '../components/admin/AdminSidebar';
+import { createServerSupabaseClient } from '../lib/supabase';
 
 interface Props {
   title?: string;
 }
 const { title = 'Admin — EquiCore' } = Astro.props;
 const currentPath = Astro.url.pathname;
+
+const responseHeaders = new Headers();
+const supabase = createServerSupabaseClient(Astro.request, responseHeaders);
+const { data: { user } } = await supabase.auth.getUser();
+
+let adminInitials = '—';
+if (user) {
+  const { data: profile } = await supabase.from('profiles').select('full_name, email').eq('id', user.id).maybeSingle();
+  const label = profile?.full_name || profile?.email || user.email || '';
+  const parts = label.trim().split(/\s+/).filter(Boolean);
+  adminInitials = parts.length === 0 ? '—' : parts.length === 1 ? parts[0].slice(0, 2).toUpperCase() : (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
 ---
 
 <!doctype html>
@@ -61,7 +74,7 @@ const currentPath = Astro.url.pathname;
 
           <!-- Avatar -->
           <div style="width: 30px; height: 30px; border-radius: 50%; background: linear-gradient(135deg, hsl(168 83% 32%), hsl(168 83% 20%)); display: flex; align-items: center; justify-content: center; color: #fff; font-size: 0.6875rem; font-weight: 800;">
-            SS
+            {adminInitials}
           </div>
         </div>
       </header>

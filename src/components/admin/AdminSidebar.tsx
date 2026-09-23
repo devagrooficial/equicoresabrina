@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { createClient } from '../../lib/supabase';
 
 const C = {
   green: 'hsl(168 83% 29%)',
@@ -67,13 +68,31 @@ function Svg({ d, size = 16 }: { d: string; size?: number }) {
   );
 }
 
+function getInitials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
 export default function AdminSidebar({ currentPath }: { currentPath: string }) {
   const [isDark, setIsDark] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [adminName, setAdminName] = useState<string | null>(null);
 
   useEffect(() => {
     setMounted(true);
     setIsDark(document.documentElement.classList.contains('dark'));
+  }, []);
+
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) return;
+      supabase.from('profiles').select('full_name, email').eq('id', user.id).maybeSingle().then(({ data }) => {
+        setAdminName(data?.full_name || data?.email || user.email || null);
+      });
+    });
   }, []);
 
   function isActive(href: string, exact: boolean) {
@@ -169,11 +188,11 @@ export default function AdminSidebar({ currentPath }: { currentPath: string }) {
       {/* User footer */}
       <div style={{ padding: '0.875rem 1.25rem', borderTop: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 10 }}>
         <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'linear-gradient(135deg, hsl(168 83% 32%), hsl(168 83% 20%))', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '0.6875rem', fontWeight: 800, flexShrink: 0 }}>
-          SS
+          {adminName ? getInitials(adminName) : '—'}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <p style={{ fontSize: '0.8125rem', fontWeight: 700, color: C.fg, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Sabrina Santos</p>
-          <p style={{ fontSize: '0.6875rem', color: C.muted }}>Administradora</p>
+          <p style={{ fontSize: '0.8125rem', fontWeight: 700, color: C.fg, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{adminName ?? 'Carregando…'}</p>
+          <p style={{ fontSize: '0.6875rem', color: C.muted }}>Admin</p>
         </div>
       </div>
     </aside>
