@@ -32,7 +32,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
   if (session && (isProtected || isAuthPage)) {
     const { data: profile } = await supabase
       .from('profiles')
-      .select('role, admin')
+      .select('role, admin, suspended')
       .eq('id', session.user.id)
       .maybeSingle();
 
@@ -42,6 +42,11 @@ export const onRequest = defineMiddleware(async (context, next) => {
       if (isAuthPage) return redirect('/dashboard');
       if (!pathname.startsWith('/dashboard')) return redirect('/dashboard');
       return next();
+    }
+
+    // Conta suspensa pelo admin: bloqueia todas as áreas (admin nunca é suspenso).
+    if (profile.suspended === true && profile.admin !== true) {
+      return redirect('/conta-suspensa');
     }
 
     const home = homeFor(profile);

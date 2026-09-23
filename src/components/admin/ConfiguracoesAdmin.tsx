@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { createClient } from '../../lib/supabase';
 
 const C = {
   green: 'hsl(168 83% 29%)',
@@ -66,6 +67,7 @@ interface Props {
 }
 
 export default function ConfiguracoesAdmin({ stripeSecretConfigured, stripeWebhookConfigured }: Props) {
+  const supabase = createClient();
   const [tab, setTab] = useState('geral');
   const [saved, setSaved] = useState<string | null>(null);
 
@@ -116,7 +118,19 @@ export default function ConfiguracoesAdmin({ stripeSecretConfigured, stripeWebho
   const [whatsappToken, setWhatsappToken] = useState('');
   const [affiliateCommission, setAffiliateCommission] = useState('15');
 
-  function save() {
+  // "Dias de Teste Gratuito" é o único campo desta tela com tabela/RLS real
+  // por trás (billing_settings, criada para a assinatura Stripe) — os
+  // demais campos desta página ainda não têm nenhuma infraestrutura real.
+  useEffect(() => {
+    supabase.from('billing_settings').select('trial_days').eq('id', 1).maybeSingle().then(({ data }) => {
+      if (data) setTrialDays(String(data.trial_days));
+    });
+  }, []);
+
+  async function save() {
+    if (tab === 'geral') {
+      await supabase.from('billing_settings').update({ trial_days: Number(trialDays) }).eq('id', 1);
+    }
     setSaved(tab);
     setTimeout(() => setSaved(null), 2500);
   }

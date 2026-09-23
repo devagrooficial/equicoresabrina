@@ -1,0 +1,30 @@
+---
+import AuthLayout from '../layouts/AuthLayout.astro';
+---
+
+<AuthLayout title="Conta suspensa — EquiCore">
+  <div class="w-full max-w-sm rounded-2xl border p-8 text-center" style="background: hsl(var(--card)); border-color: hsl(var(--border));">
+    <h1 class="text-lg font-bold mb-2" style="color: hsl(var(--foreground));">Conta suspensa</h1>
+    <p class="text-sm mb-6" style="color: hsl(var(--muted-foreground));">
+      Sua conta foi temporariamente suspensa pela administração do EquiCore.
+      Entre em contato com o suporte para mais informações.
+    </p>
+    <button
+      id="logout-btn"
+      class="w-full py-2.5 rounded-xl text-sm font-semibold text-white"
+      style="background: hsl(168 83% 29%);"
+    >
+      Sair
+    </button>
+  </div>
+
+  <script>
+    import { createClient } from '../lib/supabase';
+
+    document.getElementById('logout-btn')?.addEventListener('click', async () => {
+      const supabase = createClient();
+      await supabase.auth.signOut();
+      window.location.href = '/login';
+    });
+  </script>
+</AuthLayout>

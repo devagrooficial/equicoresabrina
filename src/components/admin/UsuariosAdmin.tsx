@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { createClient } from '../../lib/supabase';
 
 const C = {
   green: 'hsl(168 83% 29%)',
@@ -23,48 +24,37 @@ const C = {
   purpleText: 'hsl(270 70% 36%)',
 };
 
-type Plan = 'Gratuito' | 'Starter' | 'Pro' | 'Haras';
-type UserStatus = 'ACTIVE' | 'SUSPENDED' | 'INACTIVE';
+type Plan = 'free' | 'starter' | 'pro' | 'haras';
+type UserStatus = 'ACTIVE' | 'SUSPENDED';
 
 interface User {
   id: string; name: string; email: string; phone: string;
   plan: Plan; status: UserStatus; equines: number;
-  joined: string; lastLogin: string; state: string;
-  storageUsedMb: number;
+  joined: string; state: string;
 }
 
-const USERS: User[] = [
-  { id: '1', name: 'Sabrina Santos', email: 'sabrina@harasantaclara.com', phone: '(65) 99123-4567', plan: 'Pro', status: 'ACTIVE', equines: 6, joined: '15/01/2026', lastLogin: 'Agora', state: 'MT', storageUsedMb: 3200 },
-  { id: '2', name: 'Felipe Moraes', email: 'felipe@harasmorais.com', phone: '(64) 99876-5432', plan: 'Pro', status: 'ACTIVE', equines: 8, joined: '23/05/2026', lastLogin: '23/05/2026', state: 'GO', storageUsedMb: 5100 },
-  { id: '3', name: 'Carla Duarte', email: 'carla.duarte@gmail.com', phone: '(11) 98765-4321', plan: 'Starter', status: 'ACTIVE', equines: 3, joined: '22/05/2026', lastLogin: '24/05/2026', state: 'SP', storageUsedMb: 890 },
-  { id: '4', name: 'Rancho Bom Jesus Ltda.', email: 'admin@ranchobomjesus.com.br', phone: '(63) 99000-1234', plan: 'Haras', status: 'ACTIVE', equines: 34, joined: '21/05/2026', lastLogin: '23/05/2026', state: 'TO', storageUsedMb: 18400 },
-  { id: '5', name: 'Pedro Cavalcante', email: 'pedro.cav@icloud.com', phone: '(85) 98888-7777', plan: 'Gratuito', status: 'ACTIVE', equines: 1, joined: '20/05/2026', lastLogin: '21/05/2026', state: 'CE', storageUsedMb: 120 },
-  { id: '6', name: 'Ana Letícia Braga', email: 'analeticia@equidrome.com', phone: '(31) 97654-3210', plan: 'Pro', status: 'ACTIVE', equines: 12, joined: '20/05/2026', lastLogin: '24/05/2026', state: 'MG', storageUsedMb: 7800 },
-  { id: '7', name: 'Haras Boa Esperança', email: 'contato@harasboaesperanca.com.br', phone: '(67) 99321-6547', plan: 'Haras', status: 'ACTIVE', equines: 48, joined: '03/04/2026', lastLogin: '24/05/2026', state: 'MS', storageUsedMb: 24500 },
-  { id: '8', name: 'Roberto Figueiredo', email: 'r.figueiredo@hotmail.com', phone: '(82) 99111-2222', plan: 'Starter', status: 'SUSPENDED', equines: 4, joined: '14/03/2026', lastLogin: '10/04/2026', state: 'AL', storageUsedMb: 1200 },
-  { id: '9', name: 'Marcela Vieira', email: 'marcela.vet@gmail.com', phone: '(48) 98765-1234', plan: 'Pro', status: 'ACTIVE', equines: 9, joined: '27/02/2026', lastLogin: '22/05/2026', state: 'SC', storageUsedMb: 4300 },
-  { id: '10', name: 'Granja Santo Antônio', email: 'gsa@granjaantonio.com.br', phone: '(44) 99456-7890', plan: 'Haras', status: 'ACTIVE', equines: 27, joined: '10/01/2026', lastLogin: '23/05/2026', state: 'PR', storageUsedMb: 15600 },
-  { id: '11', name: 'Tiago Esperança', email: 'tiago.esp@yahoo.com', phone: '(75) 98000-4321', plan: 'Gratuito', status: 'INACTIVE', equines: 0, joined: '05/01/2026', lastLogin: '06/01/2026', state: 'BA', storageUsedMb: 0 },
-  { id: '12', name: 'Juliana Resende', email: 'ju.resende@uol.com.br', phone: '(34) 99678-0123', plan: 'Starter', status: 'ACTIVE', equines: 2, joined: '18/12/2025', lastLogin: '24/05/2026', state: 'MG', storageUsedMb: 450 },
-];
+const PLAN_LABEL: Record<Plan, string> = { free: 'Gratuito', starter: 'Starter', pro: 'Pro', haras: 'Haras' };
 
 const planCfg: Record<Plan, { bg: string; text: string }> = {
-  Gratuito: { bg: 'hsl(var(--muted))', text: C.muted },
-  Starter: { bg: C.blueLight, text: C.blueText },
-  Pro: { bg: C.greenLight, text: C.green },
-  Haras: { bg: C.purpleLight, text: C.purpleText },
+  free: { bg: 'hsl(var(--muted))', text: C.muted },
+  starter: { bg: C.blueLight, text: C.blueText },
+  pro: { bg: C.greenLight, text: C.green },
+  haras: { bg: C.purpleLight, text: C.purpleText },
 };
 
 const statusCfg: Record<UserStatus, { label: string; bg: string; text: string; dot: string }> = {
   ACTIVE: { label: 'Ativo', bg: 'hsl(142 71% 45% / 0.12)', text: 'hsl(142 71% 28%)', dot: 'hsl(142 71% 45%)' },
   SUSPENDED: { label: 'Suspenso', bg: C.amberLight, text: C.amberText, dot: C.amber },
-  INACTIVE: { label: 'Inativo', bg: 'hsl(var(--muted))', text: C.muted, dot: C.muted },
 };
 
 function nameToColor(name: string) {
   const p = ['hsl(168 60% 35%)', 'hsl(200 70% 40%)', 'hsl(250 60% 50%)', 'hsl(30 80% 45%)', 'hsl(330 65% 45%)'];
   let h = 0; for (const c of name) h += c.charCodeAt(0);
   return p[h % p.length];
+}
+
+function formatDate(iso: string) {
+  return iso ? new Date(iso).toLocaleDateString('pt-BR') : '—';
 }
 
 type FilterStatus = 'all' | UserStatus;
@@ -75,13 +65,45 @@ interface DetailModal {
 }
 
 export default function UsuariosAdmin() {
+  const supabase = createClient();
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
   const [filterPlan, setFilterPlan] = useState<FilterPlan>('all');
   const [detail, setDetail] = useState<DetailModal>({ user: null });
-  const [users, setUsers] = useState(USERS);
+  const [users, setUsers] = useState<User[]>([]);
+  const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const PER_PAGE = 8;
+
+  useEffect(() => {
+    async function load() {
+      const [{ data: profiles }, { data: equinos }] = await Promise.all([
+        supabase
+          .from('profiles')
+          .select('id, full_name, email, phone, plan, suspended, farm_state, created_at')
+          .eq('role', 'dono')
+          .order('created_at', { ascending: false }),
+        supabase.from('equinos').select('id, user_id'),
+      ]);
+
+      const countByUser = new Map<string, number>();
+      for (const e of (equinos as any[]) ?? []) countByUser.set(e.user_id, (countByUser.get(e.user_id) ?? 0) + 1);
+
+      setUsers(((profiles as any[]) ?? []).map(p => ({
+        id: p.id,
+        name: p.full_name ?? '—',
+        email: p.email ?? '—',
+        phone: p.phone ?? '—',
+        plan: (p.plan as Plan) ?? 'free',
+        status: p.suspended ? 'SUSPENDED' : 'ACTIVE',
+        equines: countByUser.get(p.id) ?? 0,
+        joined: p.created_at,
+        state: p.farm_state ?? '—',
+      })));
+      setLoading(false);
+    }
+    load();
+  }, []);
 
   const filtered = useMemo(() => {
     let list = users;
@@ -97,16 +119,26 @@ export default function UsuariosAdmin() {
   const paginated = filtered.slice((page - 1) * PER_PAGE, page * PER_PAGE);
   const totalPages = Math.ceil(filtered.length / PER_PAGE);
 
-  function toggleStatus(id: string) {
-    setUsers(prev => prev.map(u => u.id === id ? { ...u, status: u.status === 'ACTIVE' ? 'SUSPENDED' : 'ACTIVE' } : u));
+  async function toggleStatus(id: string) {
+    const user = users.find(u => u.id === id);
+    if (!user) return;
+    const nextSuspended = user.status !== 'SUSPENDED';
+    const { error } = await supabase.from('profiles').update({ suspended: nextSuspended }).eq('id', id);
+    if (error) return;
+    setUsers(prev => prev.map(u => u.id === id ? { ...u, status: nextSuspended ? 'SUSPENDED' : 'ACTIVE' } : u));
+    setDetail(d => d.user?.id === id ? { user: { ...d.user, status: nextSuspended ? 'SUSPENDED' : 'ACTIVE' } } : d);
   }
 
-  function changePlan(id: string, plan: Plan) {
+  async function changePlan(id: string, plan: Plan) {
+    const { error } = await supabase.from('profiles').update({ plan }).eq('id', id);
+    if (error) return;
     setUsers(prev => prev.map(u => u.id === id ? { ...u, plan } : u));
     setDetail({ user: null });
   }
 
-  const counts = { all: users.length, ACTIVE: users.filter(u => u.status === 'ACTIVE').length, SUSPENDED: users.filter(u => u.status === 'SUSPENDED').length, INACTIVE: users.filter(u => u.status === 'INACTIVE').length };
+  const counts = { all: users.length, ACTIVE: users.filter(u => u.status === 'ACTIVE').length, SUSPENDED: users.filter(u => u.status === 'SUSPENDED').length };
+
+  if (loading) return <p style={{ color: C.muted, fontSize: '0.875rem', padding: '2rem 0' }}>Carregando…</p>;
 
   return (
     <div>
@@ -123,14 +155,9 @@ export default function UsuariosAdmin() {
       `}</style>
 
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '1.5rem', gap: 12 }}>
-        <div>
-          <h1 style={{ fontSize: '1.25rem', fontWeight: 800, color: C.fg, letterSpacing: '-0.02em' }}>Usuários</h1>
-          <p style={{ fontSize: '0.8125rem', color: C.muted, marginTop: 2 }}>{counts.all} usuários · {counts.ACTIVE} ativos · {counts.SUSPENDED} suspensos</p>
-        </div>
-        <button style={{ padding: '0.5625rem 1.125rem', borderRadius: '0.75rem', background: C.green, color: '#fff', fontWeight: 600, fontSize: '0.875rem', border: 'none', cursor: 'pointer' }}>
-          + Convidar usuário
-        </button>
+      <div style={{ marginBottom: '1.5rem' }}>
+        <h1 style={{ fontSize: '1.25rem', fontWeight: 800, color: C.fg, letterSpacing: '-0.02em' }}>Usuários</h1>
+        <p style={{ fontSize: '0.8125rem', color: C.muted, marginTop: 2 }}>{counts.all} donos de haras · {counts.ACTIVE} ativos · {counts.SUSPENDED} suspensos</p>
       </div>
 
       {/* Summary pills */}
@@ -139,7 +166,6 @@ export default function UsuariosAdmin() {
           { key: 'all', label: 'Todos', count: counts.all },
           { key: 'ACTIVE', label: 'Ativos', count: counts.ACTIVE },
           { key: 'SUSPENDED', label: 'Suspensos', count: counts.SUSPENDED },
-          { key: 'INACTIVE', label: 'Inativos', count: counts.INACTIVE },
         ].map(f => (
           <button key={f.key} className="filter-pill" onClick={() => { setFilterStatus(f.key as FilterStatus); setPage(1); }}
             style={{ background: filterStatus === f.key ? C.green : 'transparent', color: filterStatus === f.key ? '#fff' : C.muted, borderColor: filterStatus === f.key ? C.green : C.border }}>
@@ -160,10 +186,10 @@ export default function UsuariosAdmin() {
         <select value={filterPlan} onChange={e => { setFilterPlan(e.target.value as FilterPlan); setPage(1); }}
           style={{ padding: '0.5rem 0.875rem', borderRadius: '0.625rem', border: `1px solid ${C.border}`, background: C.bg, color: C.fg, fontSize: '0.875rem', cursor: 'pointer' }}>
           <option value="all">Todos os planos</option>
-          <option value="Gratuito">Gratuito</option>
-          <option value="Starter">Starter</option>
-          <option value="Pro">Pro</option>
-          <option value="Haras">Haras</option>
+          <option value="free">Gratuito</option>
+          <option value="starter">Starter</option>
+          <option value="pro">Pro</option>
+          <option value="haras">Haras</option>
         </select>
       </div>
 
@@ -178,7 +204,7 @@ export default function UsuariosAdmin() {
                 <th>Status</th>
                 <th>Equinos</th>
                 <th>Estado</th>
-                <th>Último acesso</th>
+                <th>Cadastro</th>
                 <th>Ações</th>
               </tr>
             </thead>
@@ -201,7 +227,7 @@ export default function UsuariosAdmin() {
                       </div>
                     </td>
                     <td>
-                      <span style={{ fontSize: '0.6875rem', fontWeight: 700, padding: '2px 9px', borderRadius: 999, background: pc.bg, color: pc.text }}>{u.plan}</span>
+                      <span style={{ fontSize: '0.6875rem', fontWeight: 700, padding: '2px 9px', borderRadius: 999, background: pc.bg, color: pc.text }}>{PLAN_LABEL[u.plan]}</span>
                     </td>
                     <td>
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.6875rem', fontWeight: 700, padding: '2px 9px', borderRadius: 999, background: sc.bg, color: sc.text }}>
@@ -210,7 +236,7 @@ export default function UsuariosAdmin() {
                     </td>
                     <td style={{ color: C.muted }}>{u.equines}</td>
                     <td style={{ color: C.muted }}>{u.state}</td>
-                    <td style={{ color: C.muted, fontSize: '0.75rem' }}>{u.lastLogin}</td>
+                    <td style={{ color: C.muted, fontSize: '0.75rem' }}>{formatDate(u.joined)}</td>
                     <td>
                       <div style={{ display: 'flex', gap: 6 }}>
                         <button className="action-btn" onClick={() => setDetail({ user: u })} style={{ background: C.greenLight, color: C.green }}>Ver</button>
@@ -258,9 +284,6 @@ export default function UsuariosAdmin() {
               const u = detail.user!;
               const pc = planCfg[u.plan];
               const sc = statusCfg[u.status];
-              const storagePct = ((u.plan === 'Gratuito' ? 500 : u.plan === 'Starter' ? 2048 : u.plan === 'Pro' ? 10240 : 30720) > 0)
-                ? (u.storageUsedMb / (u.plan === 'Gratuito' ? 500 : u.plan === 'Starter' ? 2048 : u.plan === 'Pro' ? 10240 : 30720)) * 100
-                : 0;
               return (
                 <>
                   <div style={{ display: 'flex', gap: 14, marginBottom: '1.25rem' }}>
@@ -276,12 +299,11 @@ export default function UsuariosAdmin() {
 
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1.25rem' }}>
                     {[
-                      { label: 'Plano', value: <span style={{ fontSize: '0.75rem', fontWeight: 700, padding: '2px 9px', borderRadius: 999, background: pc.bg, color: pc.text }}>{u.plan}</span> },
+                      { label: 'Plano', value: <span style={{ fontSize: '0.75rem', fontWeight: 700, padding: '2px 9px', borderRadius: 999, background: pc.bg, color: pc.text }}>{PLAN_LABEL[u.plan]}</span> },
                       { label: 'Status', value: <span style={{ fontSize: '0.75rem', fontWeight: 700, padding: '2px 9px', borderRadius: 999, background: sc.bg, color: sc.text }}>{sc.label}</span> },
                       { label: 'Equinos', value: u.equines },
                       { label: 'Estado', value: u.state },
-                      { label: 'Cadastro', value: u.joined },
-                      { label: 'Último acesso', value: u.lastLogin },
+                      { label: 'Cadastro', value: formatDate(u.joined) },
                     ].map(row => (
                       <div key={row.label} style={{ padding: '0.625rem', borderRadius: '0.625rem', background: C.muted_bg }}>
                         <p style={{ fontSize: '0.6875rem', color: C.muted, fontWeight: 600, marginBottom: 4 }}>{row.label}</p>
@@ -293,23 +315,15 @@ export default function UsuariosAdmin() {
                     ))}
                   </div>
 
-                  {/* Storage */}
-                  <div style={{ marginBottom: '1.25rem' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                      <p style={{ fontSize: '0.8125rem', fontWeight: 600, color: C.fg }}>Armazenamento</p>
-                      <p style={{ fontSize: '0.75rem', color: C.muted }}>{(u.storageUsedMb / 1024).toFixed(1)} GB usado</p>
-                    </div>
-                    <div style={{ height: 6, borderRadius: 999, background: C.muted_bg, overflow: 'hidden' }}>
-                      <div style={{ height: '100%', width: `${Math.min(storagePct, 100)}%`, background: storagePct > 80 ? C.amber : C.green, borderRadius: 999 }} />
-                    </div>
-                  </div>
-
                   {/* Change plan */}
                   <div style={{ marginBottom: '1rem' }}>
-                    <p style={{ fontSize: '0.8125rem', fontWeight: 600, color: C.fg, marginBottom: 8 }}>Alterar plano</p>
+                    <p style={{ fontSize: '0.8125rem', fontWeight: 600, color: C.fg, marginBottom: 4 }}>Alterar plano</p>
+                    <p style={{ fontSize: '0.6875rem', color: C.muted, marginBottom: 8 }}>
+                      Alteração manual — se este dono tiver assinatura Stripe ativa, o próximo evento de cobrança pode sobrescrever isto.
+                    </p>
                     <div style={{ display: 'flex', gap: 6 }}>
-                      {(['Gratuito', 'Starter', 'Pro', 'Haras'] as Plan[]).map(p => (
-                        <button key={p} onClick={() => changePlan(u.id, p)} style={{ flex: 1, padding: '6px 4px', borderRadius: 8, fontSize: '0.6875rem', fontWeight: 700, border: `1.5px solid ${u.plan === p ? C.green : C.border}`, background: u.plan === p ? C.greenLight : 'transparent', color: u.plan === p ? C.green : C.muted, cursor: 'pointer' }}>{p}</button>
+                      {(['free', 'starter', 'pro', 'haras'] as Plan[]).map(p => (
+                        <button key={p} onClick={() => changePlan(u.id, p)} style={{ flex: 1, padding: '6px 4px', borderRadius: 8, fontSize: '0.6875rem', fontWeight: 700, border: `1.5px solid ${u.plan === p ? C.green : C.border}`, background: u.plan === p ? C.greenLight : 'transparent', color: u.plan === p ? C.green : C.muted, cursor: 'pointer' }}>{PLAN_LABEL[p]}</button>
                       ))}
                     </div>
                   </div>

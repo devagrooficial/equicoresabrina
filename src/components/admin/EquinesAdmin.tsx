@@ -1,4 +1,6 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { createClient } from '../../lib/supabase';
+import { computeEquineHealth, type EquineAlertLike, type EquineHealthStatus } from '../../lib/alertStatus';
 
 const C = {
   green: 'hsl(168 83% 29%)',
@@ -20,37 +22,15 @@ const C = {
 interface EquineRow {
   id: string; name: string; owner: string; ownerEmail: string;
   breed: string; sex: string; age: string;
-  status: 'ACTIVE' | 'SOLD' | 'DECEASED';
-  healthStatus: 'healthy' | 'attention' | 'urgent' | 'critical';
+  healthStatus: EquineHealthStatus;
   alerts: number; state: string; created: string;
 }
 
-const EQUINES: EquineRow[] = [
-  { id: '1', name: 'Trovão do Sul', owner: 'Sabrina Santos', ownerEmail: 'sabrina@harasantaclara.com', breed: 'Quarto de Milha', sex: 'Garanhão', age: '7 anos', status: 'ACTIVE', healthStatus: 'attention', alerts: 2, state: 'MT', created: '15/01/2026' },
-  { id: '2', name: 'Serena da Serra', owner: 'Sabrina Santos', ownerEmail: 'sabrina@harasantaclara.com', breed: 'Mangalarga Marchador', sex: 'Égua', age: '5 anos', status: 'ACTIVE', healthStatus: 'urgent', alerts: 3, state: 'MT', created: '15/01/2026' },
-  { id: '3', name: 'Duque Real', owner: 'Sabrina Santos', ownerEmail: 'sabrina@harasantaclara.com', breed: 'Puro Sangue Inglês', sex: 'Castrado', age: '9 anos', status: 'ACTIVE', healthStatus: 'critical', alerts: 1, state: 'MT', created: '15/01/2026' },
-  { id: '4', name: 'Relâmpago Preto', owner: 'Felipe Moraes', ownerEmail: 'felipe@harasmorais.com', breed: 'Quarto de Milha', sex: 'Garanhão', age: '6 anos', status: 'ACTIVE', healthStatus: 'healthy', alerts: 0, state: 'GO', created: '23/05/2026' },
-  { id: '5', name: 'Vento da Serra', owner: 'Felipe Moraes', ownerEmail: 'felipe@harasmorais.com', breed: 'Crioulo', sex: 'Castrado', age: '8 anos', status: 'ACTIVE', healthStatus: 'attention', alerts: 1, state: 'GO', created: '23/05/2026' },
-  { id: '6', name: 'Estrela Dourada', owner: 'Carla Duarte', ownerEmail: 'carla.duarte@gmail.com', breed: 'Brasileiro de Hipismo', sex: 'Égua', age: '4 anos', status: 'ACTIVE', healthStatus: 'healthy', alerts: 0, state: 'SP', created: '22/05/2026' },
-  { id: '7', name: 'Sultan do Norte', owner: 'Rancho Bom Jesus', ownerEmail: 'admin@ranchobomjesus.com.br', breed: 'Árabe', sex: 'Garanhão', age: '10 anos', status: 'ACTIVE', healthStatus: 'healthy', alerts: 0, state: 'TO', created: '21/05/2026' },
-  { id: '8', name: 'Princesa das Gerais', owner: 'Ana Letícia Braga', ownerEmail: 'analeticia@equidrome.com', breed: 'Lusitano', sex: 'Égua', age: '6 anos', status: 'ACTIVE', healthStatus: 'attention', alerts: 1, state: 'MG', created: '20/05/2026' },
-  { id: '9', name: 'Furacão Baio', owner: 'Granja Santo Antônio', ownerEmail: 'gsa@granjaantonio.com.br', breed: 'Quarto de Milha', sex: 'Garanhão', age: '5 anos', status: 'ACTIVE', healthStatus: 'critical', alerts: 2, state: 'PR', created: '10/01/2026' },
-  { id: '10', name: 'Noturno Árabe', owner: 'Haras Boa Esperança', ownerEmail: 'contato@harasboaesperanca.com.br', breed: 'Árabe', sex: 'Garanhão', age: '12 anos', status: 'ACTIVE', healthStatus: 'healthy', alerts: 0, state: 'MS', created: '03/04/2026' },
-  { id: '11', name: 'Rosa Campolina', owner: 'Marcela Vieira', ownerEmail: 'marcela.vet@gmail.com', breed: 'Campolina', sex: 'Égua', age: '7 anos', status: 'SOLD', healthStatus: 'healthy', alerts: 0, state: 'SC', created: '27/02/2026' },
-  { id: '12', name: 'Trovador Real', owner: 'Juliana Resende', ownerEmail: 'ju.resende@uol.com.br', breed: 'Mangalarga Marchador', sex: 'Garanhão', age: '3 anos', status: 'ACTIVE', healthStatus: 'urgent', alerts: 2, state: 'MG', created: '18/12/2025' },
-];
-
-const healthCfg = {
+const healthCfg: Record<EquineHealthStatus, { label: string; bg: string; text: string; dot: string }> = {
   healthy: { label: 'Saúde em Dia', bg: 'hsl(142 71% 45% / 0.12)', text: 'hsl(142 71% 28%)', dot: 'hsl(142 71% 45%)' },
   attention: { bg: C.amberLight, text: C.amberText, dot: C.amber, label: 'Atenção' },
   urgent: { bg: 'hsl(340 82% 52% / 0.1)', text: 'hsl(340 82% 32%)', dot: 'hsl(340 82% 52%)', label: 'Urgente' },
   critical: { bg: C.redLight, text: C.redText, dot: C.red, label: 'Crítico' },
-};
-
-const statusCfg = {
-  ACTIVE: { label: 'Ativo', bg: 'hsl(142 71% 45% / 0.12)', text: 'hsl(142 71% 28%)' },
-  SOLD: { label: 'Vendido', bg: C.amberLight, text: C.amberText },
-  DECEASED: { label: 'Falecido', bg: 'hsl(var(--muted))', text: C.muted },
 };
 
 function nameToColor(name: string) {
@@ -59,17 +39,71 @@ function nameToColor(name: string) {
   return p[h % p.length];
 }
 
+function calcAge(birthDate: string | null, estimatedAge: number | null): string {
+  if (birthDate) {
+    const months = Math.floor((Date.now() - new Date(birthDate).getTime()) / (1000 * 60 * 60 * 24 * 30.44));
+    return months < 24 ? `${months} meses` : `${Math.floor(months / 12)} anos`;
+  }
+  if (estimatedAge) return estimatedAge < 24 ? `${estimatedAge} meses` : `${Math.floor(estimatedAge / 12)} anos`;
+  return '—';
+}
+
+function formatDate(iso: string) {
+  return iso ? new Date(iso).toLocaleDateString('pt-BR') : '—';
+}
+
 export default function EquinesAdmin() {
+  const supabase = createClient();
+  const [equines, setEquines] = useState<EquineRow[]>([]);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [filterHealth, setFilterHealth] = useState<'all' | 'healthy' | 'attention' | 'urgent' | 'critical'>('all');
+  const [filterHealth, setFilterHealth] = useState<'all' | EquineHealthStatus>('all');
   const [filterBreed, setFilterBreed] = useState('all');
   const [page, setPage] = useState(1);
   const PER_PAGE = 10;
 
-  const breeds = ['all', ...Array.from(new Set(EQUINES.map(e => e.breed))).sort()];
+  useEffect(() => {
+    async function load() {
+      const [{ data: equinosData }, { data: profiles }, { data: alerts }] = await Promise.all([
+        supabase.from('equinos').select('id, name, breed, sex, birth_date, estimated_age, user_id, created_at').order('created_at', { ascending: false }),
+        supabase.from('profiles').select('id, full_name, email, farm_state'),
+        supabase.from('equine_alerts').select('equine_id, due_date, status_override, resolved_at, template:alert_templates(periodicity_months)'),
+      ]);
+
+      const profileById = new Map(((profiles as any[]) ?? []).map(p => [p.id, p]));
+      const alertsByEquine = new Map<string, EquineAlertLike[]>();
+      for (const a of (alerts as any[]) ?? []) {
+        const list = alertsByEquine.get(a.equine_id) ?? [];
+        list.push(a);
+        alertsByEquine.set(a.equine_id, list);
+      }
+
+      setEquines(((equinosData as any[]) ?? []).map(e => {
+        const owner = profileById.get(e.user_id);
+        const { status, alertsCount } = computeEquineHealth(alertsByEquine.get(e.id) ?? []);
+        return {
+          id: e.id,
+          name: e.name,
+          owner: owner?.full_name ?? '—',
+          ownerEmail: owner?.email ?? '—',
+          breed: e.breed,
+          sex: e.sex,
+          age: calcAge(e.birth_date, e.estimated_age),
+          healthStatus: status,
+          alerts: alertsCount,
+          state: owner?.farm_state ?? '—',
+          created: e.created_at,
+        };
+      }));
+      setLoading(false);
+    }
+    load();
+  }, []);
+
+  const breeds = useMemo(() => ['all', ...Array.from(new Set(equines.map(e => e.breed))).sort()], [equines]);
 
   const filtered = useMemo(() => {
-    let list = EQUINES;
+    let list = equines;
     if (filterHealth !== 'all') list = list.filter(e => e.healthStatus === filterHealth);
     if (filterBreed !== 'all') list = list.filter(e => e.breed === filterBreed);
     if (search.trim()) {
@@ -77,19 +111,21 @@ export default function EquinesAdmin() {
       list = list.filter(e => e.name.toLowerCase().includes(q) || e.owner.toLowerCase().includes(q) || e.breed.toLowerCase().includes(q));
     }
     return list;
-  }, [filterHealth, filterBreed, search]);
+  }, [equines, filterHealth, filterBreed, search]);
 
   const paginated = filtered.slice((page - 1) * PER_PAGE, page * PER_PAGE);
   const totalPages = Math.ceil(filtered.length / PER_PAGE);
 
   const counts = {
-    all: EQUINES.length,
-    healthy: EQUINES.filter(e => e.healthStatus === 'healthy').length,
-    attention: EQUINES.filter(e => e.healthStatus === 'attention').length,
-    urgent: EQUINES.filter(e => e.healthStatus === 'urgent').length,
-    critical: EQUINES.filter(e => e.healthStatus === 'critical').length,
-    totalAlerts: EQUINES.reduce((s, e) => s + e.alerts, 0),
+    all: equines.length,
+    healthy: equines.filter(e => e.healthStatus === 'healthy').length,
+    attention: equines.filter(e => e.healthStatus === 'attention').length,
+    urgent: equines.filter(e => e.healthStatus === 'urgent').length,
+    critical: equines.filter(e => e.healthStatus === 'critical').length,
+    totalAlerts: equines.reduce((s, e) => s + e.alerts, 0),
   };
+
+  if (loading) return <p style={{ color: C.muted, fontSize: '0.875rem', padding: '2rem 0' }}>Carregando…</p>;
 
   return (
     <div>
@@ -167,7 +203,6 @@ export default function EquinesAdmin() {
                 <th>Proprietário</th>
                 <th>Raça / Sexo</th>
                 <th>Saúde</th>
-                <th>Status</th>
                 <th>Alertas</th>
                 <th>Estado</th>
                 <th>Cadastrado</th>
@@ -175,10 +210,9 @@ export default function EquinesAdmin() {
             </thead>
             <tbody>
               {paginated.length === 0 ? (
-                <tr><td colSpan={8} style={{ textAlign: 'center', padding: '2rem', color: C.muted }}>Nenhum equino encontrado</td></tr>
+                <tr><td colSpan={7} style={{ textAlign: 'center', padding: '2rem', color: C.muted }}>Nenhum equino encontrado</td></tr>
               ) : paginated.map(e => {
                 const hc = healthCfg[e.healthStatus];
-                const sc = statusCfg[e.status];
                 const initials = e.name.split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase();
                 return (
                   <tr key={e.id}>
@@ -204,14 +238,11 @@ export default function EquinesAdmin() {
                         <span style={{ width: 5, height: 5, borderRadius: '50%', background: hc.dot }} />{hc.label}
                       </span>
                     </td>
-                    <td>
-                      <span style={{ fontSize: '0.6875rem', fontWeight: 700, padding: '2px 9px', borderRadius: 999, background: sc.bg, color: sc.text }}>{sc.label}</span>
-                    </td>
                     <td style={{ color: e.alerts > 0 ? C.redText : C.muted, fontWeight: e.alerts > 0 ? 700 : 400 }}>
                       {e.alerts > 0 ? `⚠ ${e.alerts}` : '—'}
                     </td>
                     <td style={{ color: C.muted }}>{e.state}</td>
-                    <td style={{ color: C.muted, fontSize: '0.75rem' }}>{e.created}</td>
+                    <td style={{ color: C.muted, fontSize: '0.75rem' }}>{formatDate(e.created)}</td>
                   </tr>
                 );
               })}
