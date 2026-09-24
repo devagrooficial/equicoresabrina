@@ -430,11 +430,11 @@ export default function VetRegistros({ initialTab }: { initialTab?: string | nul
       )}
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid hsl(var(--border))', overflowX: 'auto', WebkitOverflowScrolling: 'touch' as any }}>
+      <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid hsl(var(--border))', overflowX: 'auto', overflowY: 'hidden', WebkitOverflowScrolling: 'touch' as any }}>
         {TABS.map(t => (
           <button key={t.key} type="button" onClick={() => switchTab(t.key)}
             style={{
-              padding: '0.625rem 0.875rem', fontSize: '0.875rem', fontWeight: 600,
+              padding: '0.75rem 1rem', fontSize: '0.875rem', fontWeight: 600, lineHeight: 1.4,
               background: 'none', border: 'none', cursor: 'pointer', flexShrink: 0,
               color: tab === t.key ? VET_BLUE : 'hsl(var(--muted-foreground))',
               borderBottom: tab === t.key ? `2px solid ${VET_BLUE}` : '2px solid transparent',
