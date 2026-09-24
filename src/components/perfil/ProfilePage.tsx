@@ -551,7 +551,7 @@ export default function ProfilePage() {
         <p style={{ fontSize: '0.8125rem', color: C.muted, marginTop: 2 }}>Gerencie seus dados, plano e configurações</p>
       </div>
 
-      <div style={{ display: 'flex', gap: 2, padding: 4, background: C.muted_bg, borderRadius: '0.875rem', marginBottom: '1.5rem', overflowX: 'auto' }}>
+      <div style={{ display: 'flex', gap: 2, padding: 4, background: C.muted_bg, borderRadius: '0.875rem', marginBottom: '1.5rem', overflowX: 'auto', overflowY: 'hidden' }}>
         {TABS.map(t => {
           const active = tab === t.id;
           return (

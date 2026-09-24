@@ -277,7 +277,7 @@ export default function DashboardAdmin() {
             <p style={{ fontSize: '0.875rem', fontWeight: 700, color: C.fg }}>Cadastros Recentes</p>
             <a href="/admin/usuarios" style={{ fontSize: '0.75rem', color: C.green, textDecoration: 'none', fontWeight: 600 }}>Ver todos →</a>
           </div>
-          <div style={{ overflowX: 'auto' }}>
+          <div style={{ overflowX: 'auto', overflowY: 'hidden' }}>
             <table className="users-table">
               <thead>
                 <tr>

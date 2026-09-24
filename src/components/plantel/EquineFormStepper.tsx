@@ -772,7 +772,7 @@ export default function EquineFormStepper({ initialData, equineId }: { initialDa
       </div>
 
       {/* Step indicator */}
-      <div style={{ display: 'flex', alignItems: 'center', marginBottom: '2rem', overflowX: 'auto', paddingBottom: '0.5rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: '2rem', overflowX: 'auto', overflowY: 'hidden', paddingBottom: '0.5rem' }}>
         {STEPS.map((s, i) => (
           <div key={s.id} style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
             <div

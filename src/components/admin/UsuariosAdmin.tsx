@@ -195,7 +195,7 @@ export default function UsuariosAdmin() {
 
       {/* Table */}
       <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '1rem', overflow: 'hidden' }}>
-        <div style={{ overflowX: 'auto' }}>
+        <div style={{ overflowX: 'auto', overflowY: 'hidden' }}>
           <table className="ut">
             <thead>
               <tr>

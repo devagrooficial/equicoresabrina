@@ -130,7 +130,7 @@ function AssinaturasTab() {
       </div>
 
       <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '1rem', overflow: 'hidden' }}>
-        <div style={{ overflowX: 'auto' }}>
+        <div style={{ overflowX: 'auto', overflowY: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>

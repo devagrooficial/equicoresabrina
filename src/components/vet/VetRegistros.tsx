@@ -281,7 +281,7 @@ export default function VetRegistros({ initialTab }: { initialTab?: string | nul
 
     if (tab === 'equinos') {
       return (
-        <div style={{ overflowX: 'auto' }}>
+        <div style={{ overflowX: 'auto', overflowY: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead><tr>
               <th style={thStyle}>Ações</th>
@@ -340,7 +340,7 @@ export default function VetRegistros({ initialTab }: { initialTab?: string | nul
 
     if (tab === 'proprietarios') {
       return (
-        <div style={{ overflowX: 'auto' }}>
+        <div style={{ overflowX: 'auto', overflowY: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead><tr>
               <th style={thStyle}>Ações</th>
@@ -375,7 +375,7 @@ export default function VetRegistros({ initialTab }: { initialTab?: string | nul
     }
 
     return (
-      <div style={{ overflowX: 'auto' }}>
+      <div style={{ overflowX: 'auto', overflowY: 'hidden' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead><tr>
             <th style={thStyle}>Ações</th>

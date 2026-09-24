@@ -184,7 +184,7 @@ export default function AfiliadosAdmin() {
             </div>
 
             {/* Table */}
-            <div style={{ overflowX: 'auto' }}>
+            <div style={{ overflowX: 'auto', overflowY: 'hidden' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
                 <thead>
                   <tr style={{ borderBottom: `1px solid ${C.border}` }}>
@@ -256,7 +256,7 @@ export default function AfiliadosAdmin() {
                 <p style={{ marginTop: 12, fontWeight: 600 }}>Nenhum saque pendente</p>
               </div>
             ) : (
-              <div style={{ overflowX: 'auto' }}>
+              <div style={{ overflowX: 'auto', overflowY: 'hidden' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
                   <thead>
                     <tr style={{ borderBottom: `1px solid ${C.border}` }}>
