@@ -1,0 +1,352 @@
+---
+// Animal acompanhado pelo veterinário, visto pelo dono: situação sanitária
+// (AIE e mormo), laudos, resenho e histórico de saúde. O acesso é decidido
+// pelo RLS: só aparecem animais que o veterinário compartilhou e cujo
+// proprietário tem o mesmo CPF/CNPJ do perfil do dono.
+export const prerender = false;
+
+import Layout from '../../../layouts/Layout.astro';
+import Header from '../../../components/dashboard/Header';
+import { createServerSupabaseClient, isValidUUID } from '../../../lib/supabase';
+import { EXAM_LABEL, HEALTH_KINDS, HEALTH_LABEL, type ExamType, type HealthKind } from '../../../lib/sgq/labels';
+import {
+  examValidity, EXAM_GROUP_LABEL, EXAM_VALIDITY_DAYS, formatBrDate, latestExam, overallState,
+  type ExamGroup, type ExamState,
+} from '../../../lib/examStatus';
+
+const { id } = Astro.params;
+if (!id || !isValidUUID(id)) return Astro.redirect('/dashboard/documentos');
+
+const supabase = createServerSupabaseClient(Astro.request, new Headers());
+const { data: { session } } = await supabase.auth.getSession();
+if (!session) return Astro.redirect('/login');
+
+const BASE_COLUMNS = 'id, name, species, breed, coat, sex, birth_date, age_years, registry_brand, chip, signs_desc, resenha_url';
+let { data: equine, error: equineError }: { data: any; error: any } = await supabase
+  .from('vet_equines')
+  .select(`${BASE_COLUMNS}, portal_photo_url`)
+  .eq('id', id)
+  .maybeSingle();
+if (equineError) {
+  // Banco ainda sem a migration de exames (coluna portal_photo_url): mostra o cadastro mesmo assim
+  ({ data: equine } = await supabase.from('vet_equines').select(BASE_COLUMNS).eq('id', id).maybeSingle());
+}
+if (!equine) return Astro.redirect('/dashboard/documentos');
+
+interface Exam {
+  id: string;
+  exam_type: ExamType;
+  number: string;
+  collection_date: string | null;
+  laboratory: string | null;
+  laudo_available: boolean;
+}
+interface HealthRecord {
+  id: string;
+  kind: HealthKind;
+  event_date: string | null;
+  title: string | null;
+  data: Record<string, string>;
+}
+
+const [examsRes, healthRes] = await Promise.all([
+  supabase.from('vet_equine_exams')
+    .select('id, exam_type, number, collection_date, laboratory, laudo_available')
+    .eq('equine_id', id)
+    .order('collection_date', { ascending: false, nullsFirst: false }),
+  supabase.from('vet_equine_health_records')
+    .select('id, kind, event_date, title, data')
+    .eq('equine_id', id)
+    .order('event_date', { ascending: false, nullsFirst: false }),
+]);
+const exams = (examsRes.data ?? []) as Exam[];
+const health = (healthRes.data ?? []) as HealthRecord[];
+
+async function signed(path: string | null): Promise<string | null> {
+  if (!path || path.startsWith('http')) return path;
+  const { data } = await supabase.storage.from('docs').createSignedUrl(path, 43_200);
+  return data?.signedUrl ?? null;
+}
+const isImage = (path: string | null) => !!path && /\.(png|jpe?g|webp)$/i.test(path.split('?')[0]);
+const [resenhoUrl, photoUrl] = await Promise.all([signed(equine.resenha_url), signed(equine.portal_photo_url ?? null)]);
+
+// ── Situação sanitária ──────────────────────────────────────────────────────
+const TONE: Record<ExamState | 'none', { color: string; soft: string; border: string }> = {
+  valid:    { color: 'hsl(152 69% 31%)', soft: 'hsl(152 69% 40% / 0.10)', border: 'hsl(152 69% 40% / 0.30)' },
+  expiring: { color: 'hsl(32 95% 37%)',  soft: 'hsl(38 92% 50% / 0.12)',  border: 'hsl(38 92% 50% / 0.35)' },
+  expired:  { color: 'hsl(0 72% 47%)',   soft: 'hsl(0 84% 60% / 0.10)',   border: 'hsl(0 84% 60% / 0.30)' },
+  none:     { color: 'hsl(var(--muted-foreground))', soft: 'hsl(var(--muted))', border: 'hsl(var(--border))' },
+};
+
+const cards = (['aie', 'mormo'] as ExamGroup[]).map(group => {
+  const exam = latestExam(exams, group);
+  const validity = examValidity(exam?.collection_date);
+  return { group, exam, validity, tone: TONE[validity?.state ?? 'none'] };
+});
+
+const overall = overallState(exams);
+const OVERALL: Record<ExamState | 'none', { title: string; text: string }> = {
+  valid:    { title: 'Exames em dia',        text: 'AIE e mormo dentro da validade.' },
+  expiring: { title: 'Exame perto de vencer', text: 'Combine a nova colheita com o seu veterinário.' },
+  expired:  { title: 'Exame vencido',         text: 'Sem exame válido o animal não pode transitar. Fale com o seu veterinário.' },
+  none:     { title: 'Sem exames registrados', text: 'O veterinário ainda não registrou exames deste animal.' },
+};
+
+const age = equine.age_years != null ? `${equine.age_years} ${equine.age_years === 1 ? 'ano' : 'anos'}` : null;
+const chips = [equine.species, equine.breed, equine.sex, age].filter(Boolean) as string[];
+const facts: [string, string | null][] = [
+  ['Pelagem', equine.coat],
+  ['Nascimento', equine.birth_date ? formatBrDate(equine.birth_date) : null],
+  ['Registro/Marca', equine.registry_brand],
+  ['Nº do chip', equine.chip],
+];
+const healthGroups = HEALTH_KINDS
+  .map(kind => ({ kind, label: HEALTH_LABEL[kind], records: health.filter(h => h.kind === kind) }))
+  .filter(g => g.records.length > 0);
+const initials = equine.name.trim().slice(0, 2).toUpperCase();
+const GREEN = 'hsl(168 83% 29%)';
+---
+
+<Layout title={`${equine.name} — Equicore`}>
+  <Header client:load currentPath="/dashboard/documentos" />
+
+  <main class="w-full max-w-5xl mx-auto px-4 md:px-8 py-6 md:py-8 space-y-6">
+
+    <a href="/dashboard/documentos" class="inline-flex items-center gap-1.5 text-sm font-semibold no-underline" style={`color: ${GREEN};`}>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+      Documentos
+    </a>
+
+    {/* ── Cabeçalho ── */}
+    <section class="rounded-2xl border bg-card overflow-hidden">
+      <div class="p-5 md:p-6 flex flex-col md:flex-row md:items-center gap-5">
+        <div class="flex items-center gap-4 min-w-0 flex-1">
+          {photoUrl && isImage(equine.portal_photo_url ?? null) ? (
+            <img src={photoUrl} alt={`Foto de ${equine.name}`} class="w-20 h-20 rounded-2xl object-cover flex-shrink-0 border" />
+          ) : (
+            <div class="w-20 h-20 rounded-2xl flex items-center justify-center flex-shrink-0 text-xl font-extrabold text-white"
+                 style={`background: linear-gradient(135deg, ${GREEN}, hsl(168 83% 21%));`} aria-hidden="true">
+              {initials}
+            </div>
+          )}
+          <div class="min-w-0">
+            <p class="text-xs font-semibold uppercase tracking-wide" style="color: hsl(221 83% 53%);">
+              Acompanhado pelo seu veterinário
+            </p>
+            <h1 class="text-xl md:text-2xl font-extrabold tracking-tight text-foreground leading-tight break-words">{equine.name}</h1>
+            {chips.length > 0 && (
+              <div class="flex flex-wrap gap-1.5 mt-2">
+                {chips.map(chip => (
+                  <span class="text-xs font-medium px-2.5 py-1 rounded-full bg-muted text-muted-foreground">{chip}</span>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div class="rounded-xl px-4 py-3 md:max-w-xs" style={`background: ${TONE[overall].soft}; border: 1px solid ${TONE[overall].border};`}>
+          <p class="flex items-center gap-2 text-sm font-bold" style={`color: ${TONE[overall].color};`}>
+            <span class="w-2 h-2 rounded-full flex-shrink-0" style={`background: ${TONE[overall].color};`} aria-hidden="true"></span>
+            {OVERALL[overall].title}
+          </p>
+          <p class="text-xs mt-1 text-muted-foreground leading-relaxed">{OVERALL[overall].text}</p>
+        </div>
+      </div>
+    </section>
+
+    {/* ── Situação sanitária ── */}
+    <section aria-labelledby="sanitaria">
+      <h2 id="sanitaria" class="text-base font-bold tracking-tight text-foreground mb-3">Situação sanitária</h2>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {cards.map(({ group, exam, validity, tone }) => (
+          <article class="rounded-2xl border bg-card p-5 flex flex-col" style={exam ? '' : 'border-style: dashed;'}>
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <h3 class="text-lg font-extrabold tracking-tight text-foreground">{EXAM_GROUP_LABEL[group].short}</h3>
+                {EXAM_GROUP_LABEL[group].long !== EXAM_GROUP_LABEL[group].short && (
+                  <p class="text-xs text-muted-foreground">{EXAM_GROUP_LABEL[group].long}</p>
+                )}
+              </div>
+              <span class="text-xs font-bold px-2.5 py-1 rounded-full whitespace-nowrap" style={`background: ${tone.soft}; color: ${tone.color};`}>
+                {validity ? validity.label : 'Sem exame'}
+              </span>
+            </div>
+
+            {exam && validity ? (
+              <>
+                <p class="mt-4 text-xs text-muted-foreground">{validity.state === 'expired' ? 'Venceu em' : 'Válido até'}</p>
+                <p class="text-2xl font-extrabold tracking-tight text-foreground" style="font-variant-numeric: tabular-nums;">
+                  {formatBrDate(validity.until)}
+                </p>
+                <div class="mt-3 h-1.5 rounded-full overflow-hidden bg-muted" role="progressbar"
+                     aria-valuenow={validity.remainingPct} aria-valuemin="0" aria-valuemax="100"
+                     aria-label={`Validade restante do exame de ${EXAM_GROUP_LABEL[group].short}`}>
+                  <div class="h-full rounded-full" style={`width: ${validity.remainingPct}%; background: ${tone.color};`}></div>
+                </div>
+                <dl class="mt-4 grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <dt class="text-xs text-muted-foreground">Colheita</dt>
+                    <dd class="font-medium text-foreground">{formatBrDate(exam.collection_date)}</dd>
+                  </div>
+                  <div>
+                    <dt class="text-xs text-muted-foreground">Método</dt>
+                    <dd class="font-medium text-foreground">{EXAM_LABEL[exam.exam_type]}</dd>
+                  </div>
+                  <div class="col-span-2">
+                    <dt class="text-xs text-muted-foreground">Laboratório</dt>
+                    <dd class="font-medium text-foreground">{exam.laboratory ?? '—'}</dd>
+                  </div>
+                </dl>
+                <div class="mt-auto pt-5"><div class="pt-4 border-t">
+                  {exam.laudo_available ? (
+                    <a href={`/api/sgq/laudo?id=${exam.id}`} target="_blank" rel="noopener"
+                       class="inline-flex items-center justify-center gap-2 w-full text-sm font-semibold px-4 py-2.5 rounded-xl text-white no-underline"
+                       style={`background: ${GREEN};`}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>
+                      Abrir laudo (PDF)
+                    </a>
+                  ) : (
+                    <p class="text-sm text-muted-foreground text-center py-2.5">Laudo aguardando o laboratório</p>
+                  )}
+                </div></div>
+              </>
+            ) : (
+              <p class="mt-4 text-sm text-muted-foreground leading-relaxed">
+                Nenhum exame de {EXAM_GROUP_LABEL[group].short} registrado pelo veterinário para este animal.
+              </p>
+            )}
+          </article>
+        ))}
+      </div>
+      <p class="text-xs text-muted-foreground mt-3 leading-relaxed">
+        Validade estimada em {EXAM_VALIDITY_DAYS} dias após a colheita. A data oficial é a que consta no laudo.
+      </p>
+    </section>
+
+    {/* ── Identificação e resenho ── */}
+    <section class="rounded-2xl border bg-card p-5 md:p-6" aria-labelledby="identificacao">
+      <h2 id="identificacao" class="text-base font-bold tracking-tight text-foreground mb-4">Identificação</h2>
+      <div class="flex flex-col md:flex-row gap-6">
+        <div class="flex-1 min-w-0">
+          <dl class="grid grid-cols-2 gap-x-4 gap-y-4">
+            {facts.map(([label, value]) => (
+              <div>
+                <dt class="text-xs text-muted-foreground">{label}</dt>
+                <dd class="text-sm font-medium text-foreground break-words">{value || '—'}</dd>
+              </div>
+            ))}
+          </dl>
+          {equine.signs_desc && (
+            <div class="mt-4">
+              <p class="text-xs text-muted-foreground">Sinais</p>
+              <p class="text-sm text-foreground leading-relaxed">{equine.signs_desc}</p>
+            </div>
+          )}
+        </div>
+        {resenhoUrl && (
+          <a href={resenhoUrl} target="_blank" rel="noopener" class="block md:w-72 flex-shrink-0 no-underline group">
+            {isImage(equine.resenha_url) ? (
+              <img src={resenhoUrl} alt={`Resenho de ${equine.name}`} loading="lazy"
+                   class="w-full rounded-xl border" style="background: #fff; max-height: 240px; object-fit: contain;" />
+            ) : (
+              <div class="rounded-xl border p-6 text-center text-sm font-semibold" style={`color: ${GREEN};`}>Abrir resenha (PDF)</div>
+            )}
+            <span class="block text-xs text-muted-foreground mt-1.5">Resenho · toque para ampliar</span>
+          </a>
+        )}
+      </div>
+    </section>
+
+    {/* ── Histórico de exames ── */}
+    <section class="rounded-2xl border bg-card overflow-hidden" aria-labelledby="exames">
+      <div class="px-5 md:px-6 pt-5 pb-3 flex items-baseline justify-between gap-3">
+        <h2 id="exames" class="text-base font-bold tracking-tight text-foreground">Histórico de exames</h2>
+        <span class="text-xs text-muted-foreground">{exams.length} {exams.length === 1 ? 'exame' : 'exames'}</span>
+      </div>
+      {exams.length === 0 ? (
+        <p class="px-5 md:px-6 pb-6 text-sm text-muted-foreground">Nenhum exame registrado.</p>
+      ) : (
+        <ul class="list-none m-0 p-0">
+          {exams.map(exam => {
+            const v = examValidity(exam.collection_date);
+            const tone = TONE[v?.state ?? 'none'];
+            return (
+              <li class="flex items-center gap-3 px-5 md:px-6 py-3 border-t">
+                <span class="w-2.5 h-2.5 rounded-full flex-shrink-0" style={`background: ${tone.color};`} aria-hidden="true"></span>
+                <div class="flex-1 min-w-0">
+                  <p class="text-sm font-semibold text-foreground truncate">
+                    {EXAM_LABEL[exam.exam_type]}
+                    <span class="font-normal text-muted-foreground"> · {exam.number}</span>
+                  </p>
+                  <p class="text-xs text-muted-foreground truncate">
+                    Colheita em {formatBrDate(exam.collection_date)}
+                    {v ? ` · ${v.state === 'expired' ? 'venceu em' : 'válido até'} ${formatBrDate(v.until)}` : ''}
+                    {exam.laboratory ? ` · ${exam.laboratory}` : ''}
+                  </p>
+                </div>
+                {exam.laudo_available ? (
+                  <a href={`/api/sgq/laudo?id=${exam.id}`} target="_blank" rel="noopener"
+                     class="text-xs font-semibold px-3 py-1.5 rounded-lg flex-shrink-0 no-underline"
+                     style={`background: hsl(168 83% 29% / 0.08); color: ${GREEN};`}>
+                    Laudo ↗
+                  </a>
+                ) : (
+                  <span class="text-xs text-muted-foreground flex-shrink-0">Aguardando</span>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+
+    {/* ── Histórico de saúde ── */}
+    <section class="rounded-2xl border bg-card p-5 md:p-6" aria-labelledby="saude">
+      <div class="flex items-baseline justify-between gap-3 mb-1">
+        <h2 id="saude" class="text-base font-bold tracking-tight text-foreground">Histórico de saúde</h2>
+        <span class="text-xs text-muted-foreground">{health.length} {health.length === 1 ? 'registro' : 'registros'}</span>
+      </div>
+      {healthGroups.length === 0 ? (
+        <p class="text-sm text-muted-foreground mt-2 leading-relaxed">
+          Vacinas, vermifugações, medicamentos, pesagens e observações registradas pelo veterinário aparecem aqui.
+        </p>
+      ) : (
+        <div class="space-y-6 mt-4">
+          {healthGroups.map(group => (
+            <div>
+              <h3 class="text-sm font-bold text-foreground mb-2">
+                {group.label} <span class="font-normal text-muted-foreground">({group.records.length})</span>
+              </h3>
+              <ol class="list-none m-0 p-0 border-l-2 ml-1.5" style="border-color: hsl(var(--border));">
+                {group.records.map(record => (
+                  <li class="relative pl-5 pb-4 last:pb-0">
+                    <span class="absolute w-2.5 h-2.5 rounded-full" style={`left: -6px; top: 5px; background: ${GREEN};`} aria-hidden="true"></span>
+                    <p class="text-sm font-semibold text-foreground">
+                      {record.title ?? group.label}
+                      <span class="font-normal text-muted-foreground"> · {formatBrDate(record.event_date)}</span>
+                    </p>
+                    <p class="text-xs text-muted-foreground leading-relaxed">
+                      {Object.entries(record.data).map(([key, value]) => `${key}: ${value}`).join(' · ')}
+                    </p>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+
+    <p class="text-xs text-muted-foreground leading-relaxed">
+      Informações registradas pelo seu veterinário e compartilhadas com você no EquiCore.
+    </p>
+  </main>
+</Layout>
+
+<style>
+  .text-foreground        { color: hsl(var(--foreground)); }
+  .text-muted-foreground  { color: hsl(var(--muted-foreground)); }
+  .bg-card                { background-color: hsl(var(--card)); }
+  .bg-muted               { background-color: hsl(var(--muted)); }
+  .border, .border-t, .border-l-2 { border-color: hsl(var(--border)); }
+</style>

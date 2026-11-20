@@ -138,6 +138,8 @@ export default function PropriedadeForm({ editId = null }: Props) {
           <Field label="Classificação" className="md:col-span-2">
             <select value={classification} onChange={e => setClassification(e.target.value)} style={{ ...inputStyle, appearance: 'auto' }}>
               <option value="">Selecione</option>
+              {/* valor fora do catálogo (ex.: importado do portal SGQ) continua visível */}
+              {classification && !(CLASSIFICACOES as readonly string[]).includes(classification) && <option value={classification}>{classification}</option>}
               {CLASSIFICACOES.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           </Field>

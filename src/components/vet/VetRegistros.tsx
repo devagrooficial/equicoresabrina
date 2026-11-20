@@ -85,6 +85,9 @@ function TrashIcon() {
 function ImageIcon() {
   return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>;
 }
+function HistoryIcon() {
+  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect width="6" height="4" x="9" y="3" rx="1"/><path d="M9 12h6M9 16h4"/></svg>;
+}
 function ShareOnIcon() {
   return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>;
 }
@@ -297,6 +300,7 @@ export default function VetRegistros({ initialTab }: { initialTab?: string | nul
                 <tr key={r.id}>
                   <td style={tdStyle}>
                     <div style={{ display: 'flex', gap: 6 }}>
+                      <ActionButton title="Exames e histórico" color="hsl(262 60% 50%)" href={`/vet/equino/${r.id}`}><HistoryIcon /></ActionButton>
                       <ActionButton title="Editar" color="hsl(221 83% 45%)" href={`${EDIT_LINKS.equinos}${r.id}`}><PencilIcon /></ActionButton>
                       <ActionButton title="Excluir" color="hsl(0 84% 50%)" onClick={() => handleDelete(r.id, r.name)}><TrashIcon /></ActionButton>
                       {r.resenha_url && (

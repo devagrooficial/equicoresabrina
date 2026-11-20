@@ -4,6 +4,8 @@ export const prerender = false;
 import Layout from '../../../layouts/Layout.astro';
 import Header from '../../../components/dashboard/Header';
 import { createServerSupabaseClient } from '../../../lib/supabase';
+import { examValidity, EXAM_GROUP_LABEL, formatBrDate, latestExam, overallState, type ExamGroup, type ExamState } from '../../../lib/examStatus';
+import type { ExamType } from '../../../lib/sgq/labels';
 
 const responseHeaders = new Headers();
 const supabase = createServerSupabaseClient(Astro.request, responseHeaders);
@@ -17,12 +19,50 @@ const { data: alertDocs } = await supabase
   .select('id, attachment_url, attachment_name, last_done_at, due_date, equine:equinos(id, name, nickname), template:alert_templates(name, category)')
   .not('attachment_url', 'is', null);
 
-// Resenhas de equinos cadastrados por veterinários e associados ao CPF
-// do dono (cadeia proprietário ↔ equino via CPF — RLS filtra)
-const { data: vetDocsRaw } = await supabase
+// Equinos cadastrados por veterinários, compartilhados e associados ao CPF
+// do dono (cadeia proprietário ↔ equino via CPF — o RLS filtra), com os exames
+// para mostrar a situação sanitária de cada um.
+const { data: vetAnimalsRaw } = await supabase
   .from('vet_equines')
-  .select('id, name, resenha_url, created_at')
-  .not('resenha_url', 'is', null);
+  .select('id, name, species, breed, sex')
+  .order('name');
+const { data: vetExamsRaw } = await supabase
+  .from('vet_equine_exams')
+  .select('equine_id, exam_type, collection_date');
+
+type VetExam = { equine_id: string; exam_type: ExamType; collection_date: string | null };
+const vetExams = (vetExamsRaw ?? []) as VetExam[];
+
+const TONE: Record<ExamState | 'none', { color: string; soft: string }> = {
+  valid:    { color: 'hsl(152 69% 31%)', soft: 'hsl(152 69% 40% / 0.10)' },
+  expiring: { color: 'hsl(32 95% 37%)',  soft: 'hsl(38 92% 50% / 0.12)' },
+  expired:  { color: 'hsl(0 72% 47%)',   soft: 'hsl(0 84% 60% / 0.10)' },
+  none:     { color: 'hsl(var(--muted-foreground))', soft: 'hsl(var(--muted))' },
+};
+const OVERALL_LABEL: Record<ExamState | 'none', string> = {
+  valid: 'Em dia', expiring: 'Vencendo', expired: 'Vencido', none: 'Sem exames',
+};
+// Vencidos primeiro: é o que o dono precisa resolver
+const URGENCY: Record<ExamState | 'none', number> = { expired: 0, expiring: 1, none: 2, valid: 3 };
+
+const vetAnimals = (vetAnimalsRaw ?? []).map((a: any) => {
+  const exams = vetExams.filter(e => e.equine_id === a.id);
+  const overall = overallState(exams);
+  return {
+    ...a,
+    overall,
+    lines: (['aie', 'mormo'] as ExamGroup[]).map(group => {
+      const validity = examValidity(latestExam(exams, group)?.collection_date);
+      return {
+        label: EXAM_GROUP_LABEL[group].short,
+        state: (validity?.state ?? 'none') as ExamState | 'none',
+        text: validity
+          ? `${validity.state === 'expired' ? 'venceu em' : 'até'} ${formatBrDate(validity.until)}`
+          : 'sem exame',
+      };
+    }),
+  };
+}).sort((a: any, b: any) => URGENCY[a.overall as ExamState | 'none'] - URGENCY[b.overall as ExamState | 'none']);
 
 // Resolve um path de storage ou URL legada (pública) para uma URL assinada.
 // Bucket "docs" é privado — links diretos não funcionam sem assinatura.
@@ -42,10 +82,6 @@ async function toSignedUrl(pathOrUrl: string | null): Promise<string | null> {
 const docs = await Promise.all((alertDocs ?? []).map(async (d: any) => ({
   ...d,
   signed_url: await toSignedUrl(d.attachment_url),
-})));
-const vetDocs = await Promise.all((vetDocsRaw ?? []).map(async (d: any) => ({
-  ...d,
-  signed_resenha_url: await toSignedUrl(d.resenha_url),
 })));
 
 const GREEN = 'hsl(168 83% 29%)';
@@ -69,7 +105,45 @@ function fmtDate(d: string | null) {
       </p>
     </div>
 
-    {docs.length === 0 && vetDocs.length === 0 ? (
+    {vetAnimals.length > 0 && (
+      <section aria-labelledby="vet-animais">
+        <div class="flex items-baseline justify-between gap-3 mb-1">
+          <h2 id="vet-animais" class="text-base font-bold tracking-tight text-foreground">Acompanhados pelo seu veterinário</h2>
+          <span class="text-xs text-muted-foreground">{vetAnimals.length} {vetAnimals.length === 1 ? 'animal' : 'animais'}</span>
+        </div>
+        <p class="text-xs text-muted-foreground mb-3">
+          Exames de AIE e mormo, laudos, resenha e histórico de saúde registrados pelo veterinário.
+        </p>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {vetAnimals.map((a: any) => (
+            <a href={`/dashboard/documentos/${a.id}`} class="vet-card rounded-2xl border bg-card p-4 flex flex-col no-underline">
+              <div class="flex items-start justify-between gap-2">
+                <div class="min-w-0">
+                  <p class="text-sm font-bold text-foreground truncate">{a.name}</p>
+                  <p class="text-xs text-muted-foreground truncate">{[a.breed, a.sex].filter(Boolean).join(' · ') || a.species || 'Equino'}</p>
+                </div>
+                <span class="text-xs font-bold px-2 py-0.5 rounded-full whitespace-nowrap flex-shrink-0"
+                      style={`background: ${TONE[a.overall as ExamState | 'none'].soft}; color: ${TONE[a.overall as ExamState | 'none'].color};`}>
+                  {OVERALL_LABEL[a.overall as ExamState | 'none']}
+                </span>
+              </div>
+              <dl class="mt-3 space-y-1.5">
+                {a.lines.map((line: any) => (
+                  <div class="flex items-center gap-2 text-xs">
+                    <span class="w-2 h-2 rounded-full flex-shrink-0" style={`background: ${TONE[line.state as ExamState | 'none'].color};`} aria-hidden="true"></span>
+                    <dt class="font-semibold text-foreground w-12">{line.label}</dt>
+                    <dd class="text-muted-foreground m-0">{line.text}</dd>
+                  </div>
+                ))}
+              </dl>
+              <span class="mt-4 pt-3 border-t text-xs font-semibold" style={`color: ${GREEN};`}>Ver exames e histórico →</span>
+            </a>
+          ))}
+        </div>
+      </section>
+    )}
+
+    {docs.length === 0 && vetAnimals.length === 0 ? (
       <div class="rounded-2xl border bg-card p-12 flex flex-col items-center text-center gap-4"
            style="border-style: dashed;">
         <div class="w-16 h-16 rounded-2xl flex items-center justify-center"
@@ -94,6 +168,10 @@ function fmtDate(d: string | null) {
     ) : (
       <>
         {docs.length > 0 && (
+          <section aria-labelledby="anexos">
+          {vetAnimals.length > 0 && (
+            <h2 id="anexos" class="text-base font-bold tracking-tight text-foreground mb-3">Anexos dos seus alertas</h2>
+          )}
           <div class="rounded-2xl border bg-card overflow-hidden">
             {docs.map((d: any, i: number) => (
               <div class="flex items-center gap-4 px-4 py-3"
@@ -123,38 +201,6 @@ function fmtDate(d: string | null) {
               </div>
             ))}
           </div>
-        )}
-
-        {vetDocs.length > 0 && (
-          <section>
-            <h2 class="text-base font-bold tracking-tight text-foreground mb-3">
-              Resenhas gráficas emitidas por veterinários
-            </h2>
-            <p class="text-xs text-muted-foreground mb-3">
-              Equinos associados ao seu CPF por médicos veterinários no EquiCore.
-            </p>
-            <div class="rounded-2xl border bg-card overflow-hidden">
-              {vetDocs.map((d: any, i: number) => (
-                <div class="flex items-center gap-4 px-4 py-3"
-                     style={`border-bottom: ${i < vetDocs.length - 1 ? '1px solid hsl(var(--border))' : 'none'};`}>
-                  <div class="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
-                       style="background: hsl(221 83% 53% / 0.08); color: hsl(221 83% 53%);">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>
-                    </svg>
-                  </div>
-                  <div class="flex-1 min-w-0">
-                    <p class="text-sm font-semibold text-foreground truncate">Resenha — {d.name}</p>
-                    <p class="text-xs text-muted-foreground">{fmtDate(d.created_at?.slice(0, 10)) ?? ''}</p>
-                  </div>
-                  <a href={d.signed_resenha_url ?? '#'} target="_blank" rel="noopener"
-                     class="text-xs font-semibold px-3 py-1.5 rounded-lg flex-shrink-0"
-                     style="background: hsl(221 83% 53% / 0.08); color: hsl(221 83% 53%); text-decoration: none;">
-                    Abrir ↗
-                  </a>
-                </div>
-              ))}
-            </div>
           </section>
         )}
       </>
@@ -167,4 +213,9 @@ function fmtDate(d: string | null) {
   .text-foreground        { color: hsl(var(--foreground)); }
   .text-muted-foreground  { color: hsl(var(--muted-foreground)); }
   .bg-card                { background-color: hsl(var(--card)); }
+  .border, .border-t      { border-color: hsl(var(--border)); }
+  .vet-card               { transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s; }
+  .vet-card:hover         { border-color: hsl(168 83% 29% / 0.5); box-shadow: 0 6px 20px -8px hsl(168 83% 20% / 0.25); transform: translateY(-1px); }
+  .vet-card:focus-visible { outline: 2px solid hsl(168 83% 29%); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) { .vet-card { transition: none; } .vet-card:hover { transform: none; } }
 </style>

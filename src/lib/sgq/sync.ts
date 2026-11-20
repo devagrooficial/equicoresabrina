@@ -5,7 +5,8 @@
 // intervalo entre eles; o estado fica em sgq_sync_jobs / sgq_sync_items, então
 // a sincronização pode ser interrompida e retomada.
 //
-// Fases: owners → properties → animals (as três listas) → details (fichas).
+// Fases: owners → properties → animals → exams (listas) → details (fichas,
+// endereços, propriedades e, no fim, o vínculo animal–propriedade).
 //
 // Regras de gravação:
 //  - dados do EquiCore nunca são sobrescritos: a importação só cria registros
@@ -14,13 +15,14 @@
 //    próprio veterinário (RLS + auditoria com o autor correto);
 //  - credenciais e fila usam service_role e ficam invisíveis ao cliente.
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { decryptSecret, encryptSecret } from './crypto';
-import { sgqGet, sgqLogin, sleep, SgqAuthError, SgqBlockedError } from './client';
+import { sgqGet, sgqGetUpload, sgqLogin, sleep, SgqAuthError, SgqBlockedError } from './client';
 import {
-  normalizeKey, parseAnimalFicha, parseAnimalList, parseOwnerDetail,
-  parseOwnerList, parsePropertyList,
-  type SgqAnimalFicha,
+  EXAM_LABEL, EXAM_TYPES, HEALTH_LABEL, normalizeKey, parseAnimalFicha, parseAnimalList,
+  parseExamList, parseOwnerDetail, parseOwnerList, parsePropertyDetail, parsePropertyList,
+  parseRequisitionProperty,
+  type ExamType, type HealthKind, type SgqAnimalFicha,
 } from './parse';
 import { maskCpfCnpj } from '../br';
 
@@ -42,15 +44,23 @@ export interface SyncStats {
   owners:     { found: number; created: number; matched: number; noCpf: number };
   properties: { found: number; created: number; matched: number };
   animals:    { found: number; created: number; matched: number; skipped: number };
+  /** cursor: quantas das listas de requisição (EXAM_TYPES) já foram lidas */
+  exams:      { found: number; created: number; linked: number; cursor: number };
+  health:     { records: number };
+  files:      { resenhos: number; photos: number };
+  /** Vínculo animal–propriedade, lido da última requisição de cada animal */
+  links:      { queued: boolean; total: number; linked: number };
   details:    { total: number; done: number; errors: number };
   issues:     string[];
   consecutiveErrors: number;
+  /** true = reler também as fichas de animais já importados (pega exames e histórico novos) */
+  full: boolean;
 }
 
 export interface JobView {
   id: string;
   status: 'running' | 'done' | 'error' | 'cancelled';
-  phase: 'owners' | 'properties' | 'animals' | 'details' | 'done';
+  phase: 'owners' | 'properties' | 'animals' | 'exams' | 'details' | 'done';
   stats: SyncStats;
   error: string | null;
   startedAt: string;
@@ -67,7 +77,7 @@ export interface SyncChange {
 
 /** O que um passo fez — exibido na tela como atividade; não é persistido. */
 export interface SyncEvent {
-  scope: 'owners' | 'properties' | 'animals' | 'animal' | 'owner';
+  scope: 'owners' | 'properties' | 'animals' | 'exams' | 'animal' | 'owner' | 'property' | 'link';
   title: string;
   outcome: 'created' | 'updated' | 'unchanged' | 'skipped' | 'error';
   note?: string;
@@ -91,11 +101,16 @@ function listNote(found: number, created: number, matched: number, extra?: strin
   return `${found} lidos — ${created} novos, ${matched} já no EquiCore${extra ? `, ${extra}` : ''}`;
 }
 
-export function emptyStats(): SyncStats {
+export function emptyStats(full = false): SyncStats {
   return {
+    full,
     owners:     { found: 0, created: 0, matched: 0, noCpf: 0 },
     properties: { found: 0, created: 0, matched: 0 },
     animals:    { found: 0, created: 0, matched: 0, skipped: 0 },
+    exams:      { found: 0, created: 0, linked: 0, cursor: 0 },
+    health:     { records: 0 },
+    files:      { resenhos: 0, photos: 0 },
+    links:      { queued: false, total: 0, linked: 0 },
     details:    { total: 0, done: 0, errors: 0 },
     issues:     [],
     consecutiveErrors: 0,
@@ -108,9 +123,14 @@ function withDefaults(stats: Partial<SyncStats> | null): SyncStats {
     owners:     { ...base.owners,     ...stats?.owners },
     properties: { ...base.properties, ...stats?.properties },
     animals:    { ...base.animals,    ...stats?.animals },
+    exams:      { ...base.exams,      ...stats?.exams },
+    health:     { ...base.health,     ...stats?.health },
+    files:      { ...base.files,      ...stats?.files },
+    links:      { ...base.links,      ...stats?.links },
     details:    { ...base.details,    ...stats?.details },
     issues:     stats?.issues ?? [],
     consecutiveErrors: stats?.consecutiveErrors ?? 0,
+    full:       stats?.full ?? false,
   };
 }
 
@@ -181,7 +201,7 @@ async function loadIntegration(ctx: SyncContext) {
 }
 
 /** Lê uma página reaproveitando a sessão salva; refaz o login uma única vez. */
-async function fetchPage(ctx: SyncContext, page: string): Promise<string> {
+export async function fetchPage(ctx: SyncContext, page: string): Promise<string> {
   const integration = await loadIntegration(ctx);
 
   if (integration.session_enc) {
@@ -285,45 +305,63 @@ async function syncOwners(ctx: SyncContext, jobId: string, stats: SyncStats): Pr
 
 // ─── Fase 2: propriedades ────────────────────────────────────────────────────
 
-async function syncProperties(ctx: SyncContext, stats: SyncStats): Promise<SyncEvent> {
+async function syncProperties(ctx: SyncContext, jobId: string, stats: SyncStats): Promise<SyncEvent> {
   const rows = parsePropertyList(await fetchPage(ctx, 'propriedade_lista.php'));
   if (!rows) throw new Error('A lista de propriedades do portal mudou de formato.');
 
   const existing = await fetchAll(() =>
     ctx.db.from('vet_properties')
-      .select('id, name, city, uf, sgq_code')
+      .select('id, name, city, uf, sgq_code, classification, address, oesa_code, animal_count')
       .eq('vet_id', ctx.vetId).order('id'),
   );
   const placeKey = (p: { name: string; city: string | null; uf: string | null }) =>
     [normalizeKey(p.name), normalizeKey(p.city), normalizeKey(p.uf)].join('|');
 
-  const byCode = new Set(existing.filter(p => p.sgq_code).map(p => p.sgq_code));
+  const byCode = new Map<string, any>(existing.filter(p => p.sgq_code).map(p => [p.sgq_code, p]));
   const unlinked = new Map<string, any>(existing.filter(p => !p.sgq_code).map(p => [placeKey(p), p]));
 
   const inserts: any[] = [];
+  const items: any[] = [];
   stats.properties = { found: rows.length, created: 0, matched: 0 };
 
   for (const row of rows) {
-    if (byCode.has(row.code)) { stats.properties.matched++; continue; }
-    byCode.add(row.code);
+    let local = byCode.get(row.code);
 
-    // Propriedade já cadastrada à mão com mesmo nome e município: só vincula
-    const manual = unlinked.get(placeKey(row));
-    if (manual) {
-      unlinked.delete(placeKey(row));
-      await must(ctx.db.from('vet_properties').update({ sgq_code: row.code }).eq('id', manual.id));
+    if (local) {
       stats.properties.matched++;
-      continue;
+      if (blank(local.classification) && row.classification) {
+        await must(ctx.db.from('vet_properties').update({ classification: row.classification }).eq('id', local.id));
+      }
+    } else {
+      // Propriedade já cadastrada à mão com mesmo nome e município: só vincula
+      const manual = unlinked.get(placeKey(row));
+      if (manual) {
+        unlinked.delete(placeKey(row));
+        const patch = { sgq_code: row.code, ...fillBlanks(manual, { classification: row.classification }) };
+        await must(ctx.db.from('vet_properties').update(patch).eq('id', manual.id));
+        local = manual;
+        stats.properties.matched++;
+      } else {
+        local = {
+          id: randomUUID(), vet_id: ctx.vetId, name: row.name, city: row.city, uf: row.uf,
+          classification: row.classification, sgq_code: row.code,
+        };
+        inserts.push({ ...local });
+        stats.properties.created++;
+      }
+      byCode.set(row.code, local);
     }
 
-    inserts.push({
-      id: randomUUID(), vet_id: ctx.vetId, name: row.name, city: row.city, uf: row.uf,
-      classification: row.classification, sgq_code: row.code,
+    // Endereço, Nº OESA e quantidade de animais só existem na tela de edição
+    const needsDetail = blank(local.address) && blank(local.oesa_code) && blank(local.animal_count);
+    items.push({
+      job_id: jobId, kind: 'property', sgq_code: row.code, label: normalizeKey(row.name),
+      local_id: local.id, status: needsDetail ? 'pending' : 'skipped',
     });
-    stats.properties.created++;
   }
 
   await insertChunks(ctx.db, 'vet_properties', inserts);
+  await insertChunks(ctx.admin, 'sgq_sync_items', items, 500);
 
   const { found, created, matched } = stats.properties;
   return {
@@ -387,7 +425,7 @@ async function syncAnimals(ctx: SyncContext, jobId: string, stats: SyncStats): P
     const known = byCode.get(row.code);
     if (known) {
       stats.animals.matched++;
-      items.push({ ...item, local_id: known.id, status: known.sgq_synced_at ? 'skipped' : 'pending' });
+      items.push({ ...item, local_id: known.id, status: known.sgq_synced_at && !stats.full ? 'skipped' : 'pending' });
       continue;
     }
 
@@ -447,7 +485,105 @@ async function syncAnimals(ctx: SyncContext, jobId: string, stats: SyncStats): P
   };
 }
 
-// ─── Fase 4: fichas (uma por passo) ──────────────────────────────────────────
+// ─── Fase 4: exames (uma lista de requisições por passo) ─────────────────────
+
+/**
+ * Lê uma das listas de requisição (AIE IDGA, AIE ELISA, mormo ELISA) e grava os
+ * exames. O animal é ligado pelo par proprietário + nome quando ele é único;
+ * o resto é ligado depois, pela ficha do animal, que lista os próprios exames.
+ */
+async function syncExams(ctx: SyncContext, stats: SyncStats): Promise<SyncEvent> {
+  const type: ExamType = EXAM_TYPES[stats.exams.cursor];
+  const rows = parseExamList(await fetchPage(ctx, `requisicao_${type}_lista.php`));
+  if (!rows) throw new Error('A lista de requisições do portal mudou de formato.');
+
+  const [existing, equines, owners] = await Promise.all([
+    fetchAll(() =>
+      ctx.db.from('vet_equine_exams')
+        .select('id, number, equine_id, sgq_code, laboratory, collection_date, laudo_available')
+        .eq('vet_id', ctx.vetId).order('id'),
+    ),
+    fetchAll(() => ctx.db.from('vet_equines').select('id, name, owner_id').eq('vet_id', ctx.vetId).order('id')),
+    fetchAll(() => ctx.db.from('vet_owners').select('id, name').eq('vet_id', ctx.vetId).order('id')),
+  ]);
+
+  const ownerName = new Map<string, string>(owners.map(o => [o.id, normalizeKey(o.name)]));
+  const byPair = new Map<string, Set<string>>();
+  const byName = new Map<string, Set<string>>();
+  const add = (map: Map<string, Set<string>>, key: string, id: string) => {
+    if (!map.has(key)) map.set(key, new Set());
+    map.get(key)!.add(id);
+  };
+  for (const e of equines) {
+    const name = normalizeKey(e.name);
+    add(byPair, `${ownerName.get(e.owner_id) ?? ''}|${name}`, e.id);
+    add(byName, name, e.id);
+  }
+  const resolve = (owner: string, animal: string): string | null => {
+    const pair = byPair.get(`${normalizeKey(owner)}|${normalizeKey(animal)}`);
+    if (pair?.size === 1) return [...pair][0];
+    if (pair) return null;                                   // homônimos do mesmo dono
+    const name = byName.get(normalizeKey(animal));
+    return name?.size === 1 ? [...name][0] : null;
+  };
+
+  const byNumber = new Map<string, any>(existing.map(e => [e.number, e]));
+  const inserts: any[] = [];
+  let created = 0;
+  let linked = 0;
+
+  for (const row of rows) {
+    const equineId = resolve(row.ownerName, row.animalName);
+    const known = byNumber.get(row.number);
+
+    if (!known) {
+      inserts.push({
+        vet_id: ctx.vetId, equine_id: equineId, exam_type: type, number: row.number, sgq_code: row.code,
+        collection_date: row.collectionDate, laboratory: row.laboratory, laudo_available: row.laudoAvailable,
+        owner_name: row.ownerName, animal_name: row.animalName,
+      });
+      byNumber.set(row.number, { number: row.number });
+      created++;
+      if (equineId) linked++;
+      continue;
+    }
+
+    const patch: Record<string, unknown> = fillBlanks(known, {
+      sgq_code: row.code, laboratory: row.laboratory, collection_date: row.collectionDate, equine_id: equineId,
+    });
+    if (!known.laudo_available && row.laudoAvailable) patch.laudo_available = true;
+    if (Object.keys(patch).length) {
+      await must(ctx.db.from('vet_equine_exams').update(patch).eq('id', known.id));
+      if (patch.equine_id) linked++;
+    }
+  }
+
+  await insertChunks(ctx.db, 'vet_equine_exams', inserts);
+
+  stats.exams.found += rows.length;
+  stats.exams.created += created;
+  stats.exams.linked += linked;
+  stats.exams.cursor += 1;
+
+  return {
+    scope: 'exams',
+    title: `Requisições de ${EXAM_LABEL[type]}`,
+    outcome: created ? 'created' : 'unchanged',
+    note: `${rows.length} lidas — ${created} novas, ${rows.length - created} já no EquiCore`,
+    changes: [],
+    samples: rows.slice(0, SAMPLE_SIZE).map(r => ({
+      title: `${r.number} · ${r.animalName}`,
+      changes: compact([
+        change('Proprietário', r.ownerName, r.ownerName),
+        change('Colheita', r.collectionDate ? isoToBr(r.collectionDate) : null, r.collectionDate ? isoToBr(r.collectionDate) : null),
+        change('Laboratório', r.laboratory, r.laboratory),
+        change('Laudo', r.laudoAvailable ? 'Disponível' : 'Aguardando', r.laudoAvailable ? 'Disponível' : 'Aguardando'),
+      ]),
+    })),
+  };
+}
+
+// ─── Fase 5: fichas (uma por passo) ──────────────────────────────────────────
 
 function fichaToColumns(f: SgqAnimalFicha) {
   return {
@@ -483,82 +619,206 @@ function fichaChanges(f: SgqAnimalFicha, written: Set<string> | null): SyncChang
 
 type ItemResult = { status: 'done' | 'skipped'; note?: string; localId?: string; event: SyncEvent };
 
+const EQUINE_COLUMNS =
+  'id, name, registry_brand, chip, species, breed, coat, sex, birth_date, age_years, signs_desc, resenha_url, portal_photo_url';
+
+const sourceKey = (data: Record<string, string>) =>
+  createHash('sha1').update(JSON.stringify(data)).digest('hex');
+
+/** Grava um arquivo do portal na pasta do animal (bucket docs) e devolve o path. */
+async function storeEquineFile(ctx: SyncContext, equineId: string, name: string, src: string): Promise<string | null> {
+  await sleep(600);
+  const file = await sgqGetUpload(src);         // SgqBlockedError sobe: o portal mandou parar
+  if (!file) return null;
+  const path = `${ctx.vetId}/equinos/${equineId}/${name}.${file.ext}`;
+  const { error } = await ctx.db.storage.from('docs').upload(path, file.bytes, { contentType: file.contentType, upsert: true });
+  if (error) {
+    // Falha de armazenamento não invalida o resto da ficha; a imagem fica para uma próxima vez
+    console.error('[sgq/sync] upload', name, error.message);
+    return null;
+  }
+  return path;
+}
+
+/**
+ * O que a ficha traz além do cadastro: exames do animal, histórico de saúde,
+ * resenho e foto. `equine` é a linha local já gravada.
+ */
+async function syncFichaExtras(ctx: SyncContext, equine: any, ficha: SgqAnimalFicha, stats: SyncStats): Promise<SyncChange[]> {
+  const changes: SyncChange[] = [];
+
+  if (ficha.exams.length) {
+    const existing = await must<any[]>(
+      ctx.db.from('vet_equine_exams')
+        .select('id, number, equine_id, requested_date, laudo_available')
+        .eq('vet_id', ctx.vetId).in('number', ficha.exams.map(e => e.number)),
+    );
+    const byNumber = new Map<string, any>(existing.map(e => [e.number, e]));
+    const inserts: any[] = [];
+    let touched = 0;
+
+    for (const exam of ficha.exams) {
+      const known = byNumber.get(exam.number);
+      if (known) {
+        // A ficha é a fonte exata do vínculo: corrige o que a lista ligou só pelo nome
+        const patch: Record<string, unknown> = {};
+        if (known.equine_id !== equine.id) patch.equine_id = equine.id;
+        if (blank(known.requested_date) && exam.requestedDate) patch.requested_date = exam.requestedDate;
+        if (!known.laudo_available && exam.laudoAvailable) patch.laudo_available = true;
+        if (Object.keys(patch).length) {
+          await must(ctx.db.from('vet_equine_exams').update(patch).eq('id', known.id));
+          touched++;
+          if (patch.equine_id && !known.equine_id) stats.exams.linked++;
+        }
+      } else if (exam.type) {
+        inserts.push({
+          vet_id: ctx.vetId, equine_id: equine.id, exam_type: exam.type, number: exam.number,
+          requested_date: exam.requestedDate, collection_date: exam.collectionDate,
+          laudo_available: exam.laudoAvailable, animal_name: ficha.name,
+        });
+      }
+    }
+    if (inserts.length) {
+      await insertChunks(ctx.db, 'vet_equine_exams', inserts);
+      stats.exams.created += inserts.length;
+      stats.exams.linked += inserts.length;
+    }
+    changes.push({
+      field: 'Exames',
+      from: `${ficha.exams.length} na ficha (${[...new Set(ficha.exams.map(e => e.typeLabel))].join(', ')})`,
+      to: `${ficha.exams.length} ligados ao animal`,
+      written: touched + inserts.length > 0,
+    });
+  }
+
+  if (ficha.health.length) {
+    const rows = ficha.health.map(h => ({
+      vet_id: ctx.vetId, equine_id: equine.id, kind: h.kind, event_date: h.eventDate,
+      title: h.title, data: h.data, source_key: sourceKey(h.data),
+    }));
+    const { data: inserted, error } = await ctx.db.from('vet_equine_health_records')
+      .upsert(rows, { onConflict: 'equine_id,kind,source_key', ignoreDuplicates: true })
+      .select('id');
+    if (error) throw error;
+    stats.health.records += inserted?.length ?? 0;
+
+    const perKind = new Map<HealthKind, number>();
+    for (const h of ficha.health) perKind.set(h.kind, (perKind.get(h.kind) ?? 0) + 1);
+    for (const [kind, n] of perKind) {
+      changes.push({ field: HEALTH_LABEL[kind], from: `${n} no portal`, to: `${n} no histórico`, written: (inserted?.length ?? 0) > 0 });
+    }
+  }
+
+  if (ficha.resenhoSrc) {
+    let written = false;
+    if (blank(equine.resenha_url)) {
+      const path = await storeEquineFile(ctx, equine.id, 'resenha-importada', ficha.resenhoSrc);
+      if (path) {
+        await must(ctx.db.from('vet_equines').update({ resenha_url: path }).eq('id', equine.id));
+        stats.files.resenhos++;
+        written = true;
+      }
+    }
+    changes.push({ field: 'Resenho', from: 'imagem no portal', to: 'imagem importada', written });
+  }
+
+  if (ficha.photoSrc) {
+    let written = false;
+    if (blank(equine.portal_photo_url)) {
+      const path = await storeEquineFile(ctx, equine.id, 'foto-portal', ficha.photoSrc);
+      if (path) {
+        await must(ctx.db.from('vet_equines').update({ portal_photo_url: path }).eq('id', equine.id));
+        stats.files.photos++;
+        written = true;
+      }
+    }
+    changes.push({ field: 'Foto', from: 'foto no portal', to: 'foto importada', written });
+  }
+
+  return changes;
+}
+
 async function syncAnimalDetail(ctx: SyncContext, jobId: string, item: any, stats: SyncStats): Promise<ItemResult> {
   const ficha = parseAnimalFicha(await fetchPage(ctx, `animal_ficha.php?cod_animal=${item.sgq_code}`));
   if (!ficha) throw new Error('ficha do animal em formato inesperado');
 
-  const syncedAt = new Date().toISOString();
+  const skipped = (note: string): ItemResult =>
+    ({ status: 'skipped', note, event: { scope: 'animal', title: ficha.name, outcome: 'skipped', note, changes: [] } });
+
+  let equine: any;                          // linha local depois de gravar o cadastro
+  let written: Set<string> | null;          // null = registro novo (tudo gravado)
+  let outcome: SyncEvent['outcome'];
+  let note: string | undefined;
+  let localId: string | undefined;
 
   if (item.local_id) {
     const local = await must<any>(
-      ctx.db.from('vet_equines')
-        .select('id, registry_brand, chip, species, breed, coat, sex, birth_date, age_years, signs_desc')
-        .eq('id', item.local_id).maybeSingle(),
+      ctx.db.from('vet_equines').select(EQUINE_COLUMNS).eq('id', item.local_id).maybeSingle(),
     );
-    if (!local) {
-      const note = 'registro removido no EquiCore';
-      return { status: 'skipped', note, event: { scope: 'animal', title: ficha.name, outcome: 'skipped', note, changes: [] } };
-    }
+    if (!local) return skipped('registro removido no EquiCore');
     const filled = fillBlanks(local, fichaToColumns(ficha));
-    await must(ctx.db.from('vet_equines').update({ ...filled, sgq_synced_at: syncedAt }).eq('id', local.id));
-    const written = new Set(Object.keys(filled));
-    return {
-      status: 'done',
-      event: {
-        scope: 'animal', title: ficha.name,
-        outcome: written.size ? 'updated' : 'unchanged',
-        changes: fichaChanges(ficha, written),
-      },
-    };
-  }
+    if (Object.keys(filled).length) {
+      await must(ctx.db.from('vet_equines').update(filled).eq('id', local.id));
+    }
+    equine = { ...local, ...filled };
+    written = new Set(Object.keys(filled));
+    outcome = written.size ? 'updated' : 'unchanged';
+  } else {
+    // Sem vínculo pela lista (homônimo ou nome divergente): resolve pelo código do dono
+    const ownerItem = ficha.ownerCode
+      ? await must<any>(
+          ctx.admin.from('sgq_sync_items').select('local_id')
+            .eq('job_id', jobId).eq('kind', 'owner').eq('sgq_code', ficha.ownerCode).maybeSingle(),
+        )
+      : null;
+    const ownerId: string | undefined = ownerItem?.local_id ?? undefined;
+    if (!ownerId) {
+      stats.animals.skipped++;
+      addIssue(stats, `Animal não importado (proprietário sem CPF/CNPJ no portal): ${ficha.name}`);
+      return skipped('proprietário sem CPF/CNPJ no portal');
+    }
 
-  // Sem vínculo pela lista (homônimo ou nome divergente): resolve pelo código do dono
-  const ownerItem = ficha.ownerCode
-    ? await must<any>(
-        ctx.admin.from('sgq_sync_items').select('local_id')
-          .eq('job_id', jobId).eq('kind', 'owner').eq('sgq_code', ficha.ownerCode).maybeSingle(),
-      )
-    : null;
-  const ownerId: string | undefined = ownerItem?.local_id ?? undefined;
-  if (!ownerId) {
-    stats.animals.skipped++;
-    addIssue(stats, `Animal não importado (proprietário sem CPF/CNPJ no portal): ${ficha.name}`);
-    const note = 'proprietário sem CPF/CNPJ no portal';
-    return { status: 'skipped', note, event: { scope: 'animal', title: ficha.name, outcome: 'skipped', note, changes: [] } };
-  }
-
-  const sameOwner = await must<any[]>(
-    ctx.db.from('vet_equines').select('id, name, registry_brand, chip, species, breed, coat, sex, birth_date, age_years, signs_desc')
-      .eq('vet_id', ctx.vetId).eq('owner_id', ownerId).is('sgq_code', null),
-  );
-  const manual = sameOwner.find(e => normalizeKey(e.name) === normalizeKey(ficha.name));
-
-  if (manual) {
-    const filled = fillBlanks(manual, fichaToColumns(ficha));
-    await must(
-      ctx.db.from('vet_equines')
-        .update({ ...filled, sgq_code: item.sgq_code, sgq_synced_at: syncedAt }).eq('id', manual.id),
+    const sameOwner = await must<any[]>(
+      ctx.db.from('vet_equines').select(EQUINE_COLUMNS)
+        .eq('vet_id', ctx.vetId).eq('owner_id', ownerId).is('sgq_code', null),
     );
-    stats.animals.matched++;
-    return {
-      status: 'done', localId: manual.id,
-      event: {
-        scope: 'animal', title: ficha.name, outcome: 'updated',
-        note: 'vinculado a um animal que já estava cadastrado',
-        changes: fichaChanges(ficha, new Set(Object.keys(filled))),
-      },
-    };
+    const manual = sameOwner.find(e => normalizeKey(e.name) === normalizeKey(ficha.name));
+
+    if (manual) {
+      const filled = fillBlanks(manual, fichaToColumns(ficha));
+      await must(
+        ctx.db.from('vet_equines')
+          .update({ ...filled, sgq_code: item.sgq_code }).eq('id', manual.id),
+      );
+      stats.animals.matched++;
+      equine = { ...manual, ...filled };
+      written = new Set(Object.keys(filled));
+      outcome = 'updated';
+      note = 'vinculado a um animal que já estava cadastrado';
+    } else {
+      const id = randomUUID();
+      await must(ctx.db.from('vet_equines').insert({
+        id, vet_id: ctx.vetId, owner_id: ownerId, name: ficha.name,
+        ...fichaToColumns(ficha), sgq_code: item.sgq_code,
+      }));
+      stats.animals.created++;
+      equine = { id, resenha_url: null, portal_photo_url: null };
+      written = null;
+      outcome = 'created';
+    }
+    localId = equine.id;
   }
 
-  const id = randomUUID();
-  await must(ctx.db.from('vet_equines').insert({
-    id, vet_id: ctx.vetId, owner_id: ownerId, name: ficha.name,
-    ...fichaToColumns(ficha), sgq_code: item.sgq_code, sgq_synced_at: syncedAt,
-  }));
-  stats.animals.created++;
+  const extras = await syncFichaExtras(ctx, equine, ficha, stats);
+  if (outcome === 'unchanged' && extras.some(c => c.written)) outcome = 'updated';
+
+  // Só marca a ficha como importada depois de tudo gravado: se algo falhar no
+  // meio, a próxima sincronização tenta este animal de novo.
+  await must(ctx.db.from('vet_equines').update({ sgq_synced_at: new Date().toISOString() }).eq('id', equine.id));
+
   return {
-    status: 'done', localId: id,
-    event: { scope: 'animal', title: ficha.name, outcome: 'created', changes: fichaChanges(ficha, null) },
+    status: 'done', localId,
+    event: { scope: 'animal', title: ficha.name, outcome, note, changes: [...fichaChanges(ficha, written), ...extras] },
   };
 }
 
@@ -600,22 +860,150 @@ async function syncOwnerDetail(ctx: SyncContext, item: any): Promise<ItemResult>
   };
 }
 
+async function syncPropertyDetail(ctx: SyncContext, item: any): Promise<ItemResult> {
+  const detail = parsePropertyDetail(await fetchPage(ctx, `propriedade_editar.php?cod_propriedade=${item.sgq_code}`));
+  if (!detail) throw new Error('cadastro da propriedade em formato inesperado');
+
+  const local = await must<any>(
+    ctx.db.from('vet_properties')
+      .select('id, name, address, oesa_code, animal_count')
+      .eq('id', item.local_id).maybeSingle(),
+  );
+  if (!local) {
+    const note = 'registro removido no EquiCore';
+    return { status: 'skipped', note, event: { scope: 'property', title: item.label ?? 'Propriedade', outcome: 'skipped', note, changes: [] } };
+  }
+
+  const patch = fillBlanks(local, {
+    address: detail.address, oesa_code: detail.oesaCode, animal_count: detail.animalCount,
+  });
+  if (Object.keys(patch).length) {
+    await must(ctx.db.from('vet_properties').update(patch).eq('id', local.id));
+  }
+  const w = (column: string) => column in patch;
+  const count = detail.animalCount !== null ? String(detail.animalCount) : null;
+  const changes = compact([
+    change('Endereço',            detail.address,  detail.address,  w('address')),
+    change('Nº Cadastro OESA',    detail.oesaCode, detail.oesaCode, w('oesa_code')),
+    change('Quantidade de animais', count,         count,           w('animal_count')),
+  ]);
+  return {
+    status: 'done',
+    event: {
+      scope: 'property', title: local.name,
+      outcome: Object.keys(patch).length ? 'updated' : 'unchanged',
+      note: changes.length ? undefined : 'sem endereço cadastrado no portal',
+      changes,
+    },
+  };
+}
+
+/**
+ * O portal não guarda a propriedade na ficha do animal; ela aparece na
+ * requisição de exame. Usa a requisição mais recente de cada animal.
+ */
+async function syncRequisitionLink(ctx: SyncContext, item: any, stats: SyncStats): Promise<ItemResult> {
+  const [type, code] = String(item.sgq_code).split(':');
+  if (!(EXAM_TYPES as readonly string[]).includes(type) || !/^\d+$/.test(code)) {
+    throw new Error('requisição inválida');
+  }
+  const prop = parseRequisitionProperty(await fetchPage(ctx, `requisicao_${type}_editar.php?cod_requisicoes=${code}`));
+  if (!prop) throw new Error('requisição em formato inesperado');
+
+  const equine = await must<any>(
+    ctx.db.from('vet_equines').select('id, name, property_id').eq('id', item.local_id).maybeSingle(),
+  );
+  const title = equine?.name ?? 'Animal';
+  const skipped = (note: string): ItemResult =>
+    ({ status: 'skipped', note, event: { scope: 'link', title, outcome: 'skipped', note, changes: [] } });
+
+  if (!equine) return skipped('registro removido no EquiCore');
+  if (equine.property_id) return skipped('animal já tem propriedade no EquiCore');
+  if (!prop.name) return skipped('requisição sem propriedade informada');
+
+  const properties = await fetchAll(() =>
+    ctx.db.from('vet_properties').select('id, name, city').eq('vet_id', ctx.vetId).order('id'),
+  );
+  let matches = properties.filter(p => normalizeKey(p.name) === normalizeKey(prop.name));
+  if (matches.length > 1 && prop.city) {
+    matches = matches.filter(p => normalizeKey(p.city) === normalizeKey(prop.city));
+  }
+  if (matches.length !== 1) {
+    return skipped(matches.length ? `mais de uma propriedade chamada "${prop.name}"` : `propriedade "${prop.name}" não está no EquiCore`);
+  }
+
+  await must(ctx.db.from('vet_equines').update({ property_id: matches[0].id }).eq('id', equine.id));
+  stats.links.linked++;
+  return {
+    status: 'done',
+    event: {
+      scope: 'link', title, outcome: 'updated',
+      changes: [{ field: 'Propriedade', from: `${prop.name} (última requisição)`, to: matches[0].name, written: true }],
+    },
+  };
+}
+
+/** Enfileira, uma única vez por job, a requisição mais recente de cada animal sem propriedade. */
+async function queueRequisitionLinks(ctx: SyncContext, jobId: string, stats: SyncStats): Promise<SyncEvent | null> {
+  stats.links.queued = true;
+
+  const [equines, exams] = await Promise.all([
+    fetchAll(() =>
+      ctx.db.from('vet_equines').select('id')
+        .eq('vet_id', ctx.vetId).is('property_id', null).not('sgq_code', 'is', null).order('id'),
+    ),
+    fetchAll(() =>
+      ctx.db.from('vet_equine_exams').select('equine_id, exam_type, sgq_code, collection_date')
+        .eq('vet_id', ctx.vetId).not('equine_id', 'is', null).not('sgq_code', 'is', null)
+        .order('collection_date', { ascending: false, nullsFirst: false }).order('id'),
+    ),
+  ]);
+
+  const pending = new Set<string>(equines.map(e => e.id));
+  const items: any[] = [];
+  for (const exam of exams) {
+    if (!pending.has(exam.equine_id)) continue;
+    pending.delete(exam.equine_id);                       // primeira = mais recente
+    items.push({
+      job_id: jobId, kind: 'requisition', sgq_code: `${exam.exam_type}:${exam.sgq_code}`,
+      local_id: exam.equine_id, status: 'pending',
+    });
+  }
+  if (!items.length) return null;
+
+  await insertChunks(ctx.admin, 'sgq_sync_items', items, 500);
+  stats.links.total = items.length;
+  stats.details.total += items.length;
+  return {
+    scope: 'link',
+    title: 'Propriedade de cada animal',
+    outcome: 'unchanged',
+    note: `${items.length} animais sem propriedade: lendo a requisição mais recente de cada um`,
+    changes: [],
+  };
+}
+
 /** Processa o próximo item pendente. Devolve null quando a fila acabou. */
 async function syncNextDetail(ctx: SyncContext, jobId: string, stats: SyncStats): Promise<SyncEvent | null> {
-  // 'animal' < 'owner': as fichas dos animais vêm antes dos endereços
+  // Ordem alfabética do tipo: animal → owner → property → requisition
   const item = await must<any>(
     ctx.admin.from('sgq_sync_items').select('*')
       .eq('job_id', jobId).eq('status', 'pending')
       .order('kind').order('id').limit(1).maybeSingle(),
   );
-  if (!item) return null;
+  if (!item) {
+    // Fila vazia: falta só descobrir a propriedade dos animais (depende dos exames já ligados)
+    return stats.links.queued ? null : queueRequisitionLinks(ctx, jobId, stats);
+  }
 
   let update: Record<string, unknown>;
   let event: SyncEvent;
   try {
-    const result = item.kind === 'animal'
-      ? await syncAnimalDetail(ctx, jobId, item, stats)
-      : await syncOwnerDetail(ctx, item);
+    const result =
+      item.kind === 'animal'      ? await syncAnimalDetail(ctx, jobId, item, stats)
+      : item.kind === 'owner'     ? await syncOwnerDetail(ctx, item)
+      : item.kind === 'property'  ? await syncPropertyDetail(ctx, item)
+      :                             await syncRequisitionLink(ctx, item, stats);
     update = { status: result.status, note: result.note ?? null, ...(result.localId ? { local_id: result.localId } : {}) };
     event = result.event;
     stats.consecutiveErrors = 0;
@@ -625,7 +1013,9 @@ async function syncNextDetail(ctx: SyncContext, jobId: string, stats: SyncStats)
     console.error('[sgq/sync] item', item.kind, item.sgq_code, err);
     const note = err instanceof Error ? err.message.slice(0, 200) : 'erro';
     update = { status: 'error', note };
-    event = { scope: item.kind, title: item.label ?? item.sgq_code, outcome: 'error', note, changes: [] };
+    const scope: SyncEvent['scope'] = item.kind === 'requisition' ? 'link' : item.kind;
+    // label é o nome normalizado (minúsculo, sem acento); em caixa alta fica igual aos demais
+    event = { scope, title: String(item.label ?? item.sgq_code).toUpperCase(), outcome: 'error', note, changes: [] };
     stats.details.errors++;
     stats.consecutiveErrors++;
   }
@@ -664,7 +1054,10 @@ function errorMessage(err: unknown): string {
     return 'O portal SGQ recusou o acesso. A sincronização foi interrompida — tente novamente mais tarde.';
   }
   if (err instanceof Error && /portal/i.test(err.message)) return err.message;
-  return 'Falha inesperada na sincronização.';
+  // Erros do banco chegam como objeto { code, message } — o detalhe poupa uma ida aos logs
+  const e = err as { code?: unknown; message?: unknown } | null;
+  const detail = [e?.code, e?.message].filter(v => typeof v === 'string' && v).join(': ').slice(0, 160);
+  return `Falha inesperada na sincronização.${detail ? ` Detalhe: ${detail}` : ''}`;
 }
 
 /** Executa um passo de um job já reservado por claimTick(). */
@@ -682,12 +1075,16 @@ export async function runTick(ctx: SyncContext, job: any): Promise<{ job: JobVie
       event = await syncOwners(ctx, job.id, stats);
       phase = 'properties';
     } else if (phase === 'properties') {
-      event = await syncProperties(ctx, stats);
+      await must(ctx.admin.from('sgq_sync_items').delete().eq('job_id', job.id).eq('kind', 'property'));
+      event = await syncProperties(ctx, job.id, stats);
       phase = 'animals';
     } else if (phase === 'animals') {
       await must(ctx.admin.from('sgq_sync_items').delete().eq('job_id', job.id).eq('kind', 'animal'));
       event = await syncAnimals(ctx, job.id, stats);
-      phase = 'details';
+      phase = 'exams';
+    } else if (phase === 'exams') {
+      event = await syncExams(ctx, stats);
+      if (stats.exams.cursor >= EXAM_TYPES.length) phase = 'details';
     } else if (phase === 'details') {
       event = await syncNextDetail(ctx, job.id, stats);
       if (!event) phase = 'done';

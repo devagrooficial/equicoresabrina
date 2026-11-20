@@ -7,7 +7,11 @@ import { claimTick, emptyStats, jobView, runTick } from '../../../lib/sgq/sync';
 
 export const prerender = false;
 
-const schema = z.object({ action: z.enum(['start', 'tick', 'cancel']) });
+const schema = z.object({
+  action: z.enum(['start', 'tick', 'cancel']),
+  // start: reler também as fichas dos animais já importados
+  full: z.boolean().optional(),
+});
 
 // Controle da sincronização com o portal SGQ.
 //   start  — cria o job (ou devolve o que já está em andamento); não acessa o portal
@@ -20,7 +24,7 @@ export const POST: APIRoute = async ({ request }) => {
 
   const parsed = schema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return json({ error: 'Ação inválida.' }, 400, headers);
-  const { action } = parsed.data;
+  const { action, full } = parsed.data;
 
   if (!isSgqConfigured()) {
     return json({ error: 'Integração indisponível: servidor sem chave de criptografia.' }, 503, headers);
@@ -51,8 +55,18 @@ export const POST: APIRoute = async ({ request }) => {
         .select('vet_id').eq('vet_id', vetId).eq('provider', 'sgq').maybeSingle();
       if (!integration) return json({ error: 'Conecte sua conta do portal SGQ primeiro.' }, 400, headers);
 
+      // Confere o banco antes de tocar no portal: sem a migration de exames a
+      // sincronização falharia no meio, depois de já ter lido as listas.
+      const schemaCheck = await admin.from('vet_equine_exams').select('id', { count: 'exact', head: true });
+      if (schemaCheck.error) {
+        return json({
+          error: 'Atualização pendente no banco: rode supabase/sgq_exams_health.sql no SQL Editor do Supabase.',
+          detail: [schemaCheck.error.code, schemaCheck.error.message].filter(Boolean).join(': ').slice(0, 160),
+        }, 409, headers);
+      }
+
       const { data, error } = await admin.from('sgq_sync_jobs')
-        .insert({ vet_id: vetId, stats: emptyStats() }).select().single();
+        .insert({ vet_id: vetId, stats: emptyStats(full === true) }).select().single();
       if (error) {
         // Corrida entre duas abas: o índice único garante um job por veterinário
         const raced = await running();
@@ -73,6 +87,8 @@ export const POST: APIRoute = async ({ request }) => {
     return json(result, 200, headers);
   } catch (err) {
     console.error('[sgq/sync]', action, err);
-    return json({ error: 'Falha na sincronização.' }, 500, headers);
+    const e = err as { code?: unknown; message?: unknown } | null;
+    const detail = [e?.code, e?.message].filter(v => typeof v === 'string' && v).join(': ').slice(0, 160);
+    return json({ error: 'Falha na sincronização.', detail: detail || undefined }, 500, headers);
   }
 };

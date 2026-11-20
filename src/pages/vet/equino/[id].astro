@@ -1,0 +1,12 @@
+---
+export const prerender = false;
+
+import VetLayout from '../../../layouts/VetLayout.astro';
+import VetEquineHistory from '../../../components/vet/VetEquineHistory';
+
+const { id } = Astro.params;
+---
+
+<VetLayout title="Histórico do animal — Equicore Vet">
+  <VetEquineHistory client:load equineId={id ?? ''} />
+</VetLayout>

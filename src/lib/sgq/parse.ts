@@ -4,6 +4,9 @@
 import { parse, type HTMLElement } from 'node-html-parser';
 import { ESPECIES, RACAS, PELAGENS } from '../vetCatalogs';
 import { ageFromBirthDate, maskCEP, maskPhone, onlyDigits, UF_LIST } from '../br';
+import { EXAM_TYPES, type ExamType, type HealthKind } from './labels';
+
+export { EXAM_LABEL, EXAM_TYPES, HEALTH_KINDS, HEALTH_LABEL, type ExamType, type HealthKind } from './labels';
 
 // ─── Texto ───────────────────────────────────────────────────────────────────
 
@@ -97,6 +100,28 @@ export function mapCoat(raw: string): string | null {
   return PELAGENS_IDX.get(feminine) ?? titleCasePt(raw);
 }
 
+// Siglas de classificação de propriedade do portal → EquiCore.
+// As que não têm equivalente no catálogo ficam com o nome por extenso.
+const CLASSIFICATION: Record<string, string> = {
+  h:     'Haras',
+  fc:    'Fazenda',
+  outro: 'Outro',
+  cr:    'Cancha Reta',
+  jc:    'Jockey Club',
+  sh:    'Sociedade Hípica',
+  um:    'Unidade Militar',
+};
+
+export function mapClassification(raw: string): string | null {
+  return CLASSIFICATION[normalizeKey(raw)] ?? null;
+}
+
+/** "AIE (IDGA)" → 'aieidga' */
+export function mapExamType(raw: string): ExamType | null {
+  const key = normalizeKey(raw).replace(/[^a-z]/g, '');
+  return (EXAM_TYPES as readonly string[]).includes(key) ? (key as ExamType) : null;
+}
+
 // ─── Utilitários de formato ──────────────────────────────────────────────────
 
 /** "SÃO GABRIEL - RS" → { city: "São Gabriel", uf: "RS" } */
@@ -120,6 +145,19 @@ export function brDateToIso(raw: string): string | null {
   const d = new Date(Number(yyyy), Number(mm) - 1, Number(dd));
   if (d.getFullYear() !== Number(yyyy) || d.getMonth() !== Number(mm) - 1 || d.getDate() !== Number(dd)) return null;
   if (Number(yyyy) < 1950 || d > new Date()) return null;
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+/** Data que pode vir como "31/12/2026", "31/12/2026 14:30" ou "2026-12-31"; aceita datas futuras. */
+export function anyDateToIso(raw: string): string | null {
+  const value = clean(raw);
+  const br = value.match(/^(\d{2})\/(\d{2})\/(\d{4})\b/);
+  const iso = value.match(/^(\d{4})-(\d{2})-(\d{2})\b/);
+  const [yyyy, mm, dd] = br ? [br[3], br[2], br[1]] : iso ? [iso[1], iso[2], iso[3]] : [];
+  if (!yyyy) return null;
+  const d = new Date(Number(yyyy), Number(mm) - 1, Number(dd));
+  if (d.getFullYear() !== Number(yyyy) || d.getMonth() !== Number(mm) - 1 || d.getDate() !== Number(dd)) return null;
+  if (Number(yyyy) < 1950 || Number(yyyy) > 2100) return null;
   return `${yyyy}-${mm}-${dd}`;
 }
 
@@ -214,8 +252,7 @@ export function parsePropertyList(html: string): SgqPropertyRow[] | null {
       code,
       name,
       ...splitCityUf(td[2].text),
-      // O portal usa siglas próprias (CR, FC, JC…) sem equivalência no EquiCore
-      classification: normalizeKey(td[3].text) === 'outro' ? 'Outro' : null,
+      classification: mapClassification(td[3].text),
       raw: { cityUf: clean(td[2].text), classification: clean(td[3].text) },
     });
   }
@@ -282,6 +319,102 @@ export interface SgqAnimalFicha {
   signsDesc: string | null;
   /** Valores como aparecem no portal (para exibir o de-para) */
   raw: { species: string; breed: string; coat: string; sex: string; birthDate: string; age: string };
+  exams: SgqFichaExam[];
+  health: SgqHealthRecord[];
+  /** Caminhos relativos a /pages/forms/ (ex.: "uploads/abc.png") */
+  resenhoSrc: string | null;
+  photoSrc: string | null;
+}
+
+export interface SgqFichaExam {
+  number: string;
+  type: ExamType | null;
+  typeLabel: string;
+  requestedDate: string | null;    // ISO
+  collectionDate: string | null;   // ISO
+  laudoAvailable: boolean;
+}
+
+export interface SgqHealthRecord {
+  kind: HealthKind;
+  eventDate: string | null;        // ISO
+  title: string | null;
+  /** Colunas da tabela do portal, na ordem em que aparecem */
+  data: Record<string, string>;
+}
+
+// Tabelas da ficha, reconhecidas pelo cabeçalho. `title` é a coluna que resume o registro.
+const HEALTH_TABLES: { kind: HealthKind; headers: string[]; date: string; title: string }[] = [
+  { kind: 'vacina',       headers: ['Aplicação', 'Vacina', 'Produto', 'Próxima', 'Situação'],  date: 'Aplicação', title: 'Vacina' },
+  { kind: 'vermifugacao', headers: ['Aplicação', 'Produto', 'Dose', 'Próxima', 'Situação'],    date: 'Aplicação', title: 'Produto' },
+  { kind: 'medicamento',  headers: ['Início', 'Medicamento', 'Dose', 'Fim', 'Situação'],        date: 'Início',    title: 'Medicamento' },
+  { kind: 'pesagem',      headers: ['Data', 'Peso', 'Variação', 'ECC', 'Método', 'CRMV'],       date: 'Data',      title: 'Peso' },
+  { kind: 'reproducao',   headers: ['Data', 'Evento', 'Reprodutor(a)', 'Método', 'Resultado', 'Data prevista', 'Filhotes', 'CRMV'], date: 'Data', title: 'Evento' },
+  { kind: 'observacao',   headers: ['Data', 'Tipo', 'Título', 'Descrição', 'Retorno', 'CRMV'],  date: 'Data',      title: 'Título' },
+];
+
+function tableHeaders(table: HTMLElement): string[] {
+  return table.querySelectorAll('thead th').map(th => clean(th.text));
+}
+
+/** Linhas de dados de uma tabela (ignora a linha "Nenhum registro", que usa colspan). */
+function dataRows(table: HTMLElement): HTMLElement[][] {
+  return table.querySelectorAll('tbody tr')
+    .filter(tr => !tr.querySelector('td[colspan]'))
+    .map(tr => tr.querySelectorAll('td'))
+    .filter(td => td.length > 1);
+}
+
+function parseFichaExams(root: HTMLElement): SgqFichaExam[] {
+  const table = root.querySelectorAll('table').find(t => {
+    const h = tableHeaders(t);
+    return h.includes('Requisição') && h.includes('Tipo') && h.includes('Data da colheita');
+  });
+  if (!table) return [];
+  return dataRows(table).flatMap(td => {
+    const number = clean(td[0].text);
+    if (!number || td.length < 5) return [];
+    const typeLabel = clean(td[1].text);
+    return [{
+      number,
+      type: mapExamType(typeLabel),
+      typeLabel,
+      requestedDate: anyDateToIso(td[2].text),
+      collectionDate: anyDateToIso(td[3].text),
+      laudoAvailable: normalizeKey(td[4].text).startsWith('dispon'),
+    }];
+  });
+}
+
+function parseFichaHealth(root: HTMLElement): SgqHealthRecord[] {
+  const out: SgqHealthRecord[] = [];
+  for (const table of root.querySelectorAll('table')) {
+    const headers = tableHeaders(table);
+    const named = headers.filter(Boolean);
+    const spec = HEALTH_TABLES.find(t => t.headers.length === named.length && t.headers.every((h, i) => h === named[i]));
+    if (!spec) continue;
+    for (const td of dataRows(table)) {
+      const data: Record<string, string> = {};
+      headers.forEach((h, i) => {
+        const value = clean(td[i]?.text);
+        if (h && value) data[h] = value;
+      });
+      if (!Object.keys(data).length) continue;
+      out.push({
+        kind: spec.kind,
+        eventDate: anyDateToIso(data[spec.date] ?? ''),
+        title: data[spec.title] ?? null,
+        data,
+      });
+    }
+  }
+  return out;
+}
+
+/** Só aceita arquivos da pasta de uploads do portal, sem subir de diretório. */
+function uploadSrc(el: HTMLElement | null): string | null {
+  const src = el?.getAttribute('src') ?? '';
+  return /^uploads\/[A-Za-z0-9_.-]+\.(png|jpe?g|webp)$/i.test(src) ? src : null;
 }
 
 /** animal_ficha.php?cod_animal=N — null quando o formulário de cadastro não está na página. */
@@ -317,6 +450,10 @@ export function parseAnimalFicha(html: string, today: Date = new Date()): SgqAni
     ageYears,
     signsDesc:     meaningful(inputValue(root, 'descricao_sinais')),
     raw,
+    exams:         parseFichaExams(root),
+    health:        parseFichaHealth(root),
+    resenhoSrc:    uploadSrc(root.querySelector('img.resenho-imagem')),
+    photoSrc:      uploadSrc(root.querySelector('.animal-avatar img')),
   };
 }
 
@@ -338,4 +475,99 @@ export function parseOwnerDetail(html: string): SgqOwnerDetail | null {
     cep:            cep.length === 8 ? maskCEP(cep) : null,
     producerNumber: meaningful(inputValue(root, 'numero_produtor')),
   };
+}
+
+// ─── Propriedade (detalhe) ───────────────────────────────────────────────────
+
+export interface SgqPropertyDetail {
+  address: string | null;
+  oesaCode: string | null;
+  animalCount: number | null;
+}
+
+/** propriedade_editar.php?cod_propriedade=N */
+export function parsePropertyDetail(html: string): SgqPropertyDetail | null {
+  const root = parse(html);
+  if (!root.querySelector('[name="nome_propriedade"]')) return null;
+  const count = inputValue(root, 'animais_propriedade');
+  return {
+    address:     meaningful(inputValue(root, 'endereco_propriedade')),
+    oesaCode:    meaningful(inputValue(root, 'cadastro_oesa')),
+    animalCount: /^\d{1,6}$/.test(count) ? parseInt(count, 10) : null,
+  };
+}
+
+// ─── Requisições de exame ────────────────────────────────────────────────────
+
+export interface SgqExamRow {
+  code: string;
+  number: string;
+  ownerName: string;
+  animalName: string;
+  collectionDate: string | null;   // ISO
+  laboratory: string | null;
+  laudoAvailable: boolean;
+}
+
+/** requisicao_{aieidga,aieelisa,mormoelisa}_lista.php */
+export function parseExamList(html: string): SgqExamRow[] | null {
+  const table = parse(html).querySelectorAll('table').find(t => {
+    const h = tableHeaders(t);
+    return h.includes('Requisição') && h.includes('Laboratório');
+  });
+  if (!table) return null;
+  const out: SgqExamRow[] = [];
+  for (const td of dataRows(table)) {
+    if (td.length < 7) continue;
+    const code = (td[0].innerHTML.match(/(?:laudo|editar|relatorio)\('(\d+)'\)/) ?? [])[1];
+    const number = clean(td[2].text);
+    if (!code || !number) continue;
+    out.push({
+      code,
+      number,
+      ownerName: clean(td[3].text),
+      animalName: clean(td[4].text),
+      collectionDate: anyDateToIso(td[5].text),
+      laboratory: meaningful(td[6].text),
+      laudoAvailable: normalizeKey(td[1].text).startsWith('dispon'),
+    });
+  }
+  return out;
+}
+
+export interface SgqRequisitionProperty {
+  name: string | null;
+  city: string | null;
+  uf: string | null;
+}
+
+/** requisicao_*_editar.php?cod_requisicoes=N — propriedade onde o animal estava na coleta. */
+export function parseRequisitionProperty(html: string): SgqRequisitionProperty | null {
+  const root = parse(html);
+  if (!root.querySelector('[name="nome_do_animal"]')) return null;
+  const uf = inputValue(root, 'uf_propriedade').toUpperCase();
+  const city = meaningful(inputValue(root, 'municipio'));
+  return {
+    name: meaningful(inputValue(root, 'nome_da_propriedade')),
+    city: city ? titleCasePt(city) : null,
+    uf: (UF_LIST as readonly string[]).includes(uf) ? uf : null,
+  };
+}
+
+/**
+ * requisicao_*_resenha_laudo.php — a página embute o PDF hospedado nos
+ * servidores da SGQ. Devolve a URL só se for https em *.sgqsistemas.com.br.
+ */
+export function parseLaudoUrl(html: string): string | null {
+  const root = parse(html);
+  const raw = root.querySelector('object[data]')?.getAttribute('data')
+    ?? root.querySelector('a[download]')?.getAttribute('href')
+    ?? '';
+  try {
+    const url = new URL(raw.trim());
+    const allowed = url.protocol === 'https:' && url.hostname.endsWith('.sgqsistemas.com.br');
+    return allowed && /\.pdf$/i.test(url.pathname) ? url.toString() : null;
+  } catch {
+    return null;
+  }
 }

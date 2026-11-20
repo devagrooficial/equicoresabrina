@@ -23,6 +23,10 @@ const READABLE = [
   /^animal_lista\.php$/,
   /^animal_ficha\.php\?cod_animal=\d+$/,
   /^proprietario_editar\.php\?cod_pro=\d+$/,
+  /^propriedade_editar\.php\?cod_propriedade=\d+$/,
+  /^requisicao_(aieidga|aieelisa|mormoelisa)_lista\.php$/,
+  /^requisicao_(aieidga|aieelisa|mormoelisa)_editar\.php\?cod_requisicoes=\d+$/,        // só leitura do formulário
+  /^requisicao_(aieidga|aieelisa|mormoelisa)_resenha_laudo\.php\?cod_requisicoes=\d+$/,
   /^index\.php$/,
 ];
 
@@ -114,4 +118,55 @@ export async function sgqGet(cookie: string, page: string): Promise<{ html: stri
   if (res.status !== 200) return { html: '', loggedIn: false };
   const html = await res.text();
   return { html, loggedIn: isLoggedInHtml(html) };
+}
+
+export interface SgqFile {
+  bytes: Uint8Array;
+  contentType: string;
+  ext: string;
+}
+
+const FILE_TYPES: Record<string, string> = {
+  'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'application/pdf': 'pdf',
+};
+
+async function download(url: string, maxBytes: number): Promise<SgqFile | null> {
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      redirect: 'error',
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+      headers: { 'User-Agent': USER_AGENT },
+    });
+  } catch {
+    return null;
+  }
+  if (res.status === 403 || res.status === 429) throw new SgqBlockedError(`Portal respondeu ${res.status}.`);
+  if (res.status !== 200) return null;
+
+  const contentType = (res.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
+  const ext = FILE_TYPES[contentType];
+  if (!ext || Number(res.headers.get('content-length') ?? 0) > maxBytes) return null;
+
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  if (bytes.byteLength === 0 || bytes.byteLength > maxBytes) return null;
+  return { bytes, contentType, ext };
+}
+
+/**
+ * Baixa uma imagem da pasta de uploads do portal (resenho ou foto do animal).
+ * `src` vem do parser, que só aceita "uploads/<arquivo>.<png|jpg|webp>".
+ */
+export async function sgqGetUpload(src: string): Promise<SgqFile | null> {
+  if (!/^uploads\/[A-Za-z0-9_.-]+\.(png|jpe?g|webp)$/i.test(src)) return null;
+  const file = await download(`${BASE}/pages/forms/${src}`, 5 * 1024 * 1024);
+  return file && file.ext !== 'pdf' ? file : null;
+}
+
+/** Baixa o PDF de um laudo. `url` vem de parseLaudoUrl(), que restringe o domínio. */
+export async function sgqGetLaudo(url: string): Promise<SgqFile | null> {
+  const parsed = new URL(url);
+  if (parsed.protocol !== 'https:' || !parsed.hostname.endsWith('.sgqsistemas.com.br')) return null;
+  const file = await download(parsed.toString(), 15 * 1024 * 1024);
+  return file && file.ext === 'pdf' ? file : null;
 }

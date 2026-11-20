@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  anyDateToIso, mapClassification, mapExamType, parseExamList, parseLaudoUrl, parsePropertyDetail,
+  parseRequisitionProperty,
   brDateToIso, isLoggedInHtml, mapBreed, mapCoat, mapSex, mapSpecies, normalizeKey,
   parseAnimalFicha, parseAnimalList, parseOwnerDetail, parseOwnerList, parsePropertyList,
   splitCityUf, titleCasePt,
@@ -131,7 +133,7 @@ describe('listas do portal', () => {
 
   it('lê propriedades', () => {
     expect(parsePropertyList(PROPERTY_LIST)).toEqual([
-      { code: '4501', name: 'FAZENDA SANTA RITA', city: 'Campo Grande', uf: 'MS', classification: null,
+      { code: '4501', name: 'FAZENDA SANTA RITA', city: 'Campo Grande', uf: 'MS', classification: 'Cancha Reta',
         raw: { cityUf: 'CAMPO GRANDE - MS', classification: 'CR' } },
       { code: '4502', name: 'SÍTIO DO VALE', city: 'Sidrolândia', uf: 'MS', classification: 'Outro',
         raw: { cityUf: 'SIDROLÂNDIA - MS', classification: 'OUTRO' } },
@@ -161,6 +163,7 @@ describe('fichas do portal', () => {
       species: 'Equina', breed: 'Sem Raça Definida (SRD)', coat: 'Castanha', sex: 'Macho',
       birthDate: '2016-01-01', ageYears: 10, signsDesc: 'Estrela na testa, calçado',
       raw: { species: 'EQUINA', breed: 'SRD', coat: 'CASTANHO', sex: 'MACHO', birthDate: '01/01/2016', age: '10 anos e 10 meses' },
+      exams: [], health: [], resenhoSrc: null, photoSrc: null,
     });
   });
 
@@ -178,6 +181,98 @@ describe('fichas do portal', () => {
       address: 'RUA DAS FLORES, 100', district: 'CENTRO', cep: '79490-000', producerNumber: null,
     });
     expect(parseOwnerDetail(ANIMAL_LIST)).toBeNull();
+  });
+});
+
+const FICHA_FULL = ANIMAL_FICHA.replace('</form>', `</form>
+<div class="animal-foto-area"><div class="animal-avatar"><img src="uploads/foto123.jpg"></div></div>
+<div class="resenho-visualizacao"> <img class="resenho-imagem" src="uploads/e0ffa1b2.png" alt="Resenho"> </div>
+<table class="table table-striped"><thead><tr><th>Requisição</th><th>Tipo</th><th>Data da requisição</th><th>Data da colheita</th><th>Laudo</th></tr></thead><tbody>
+<tr> <td>PCR905892</td> <td>AIE (IDGA)</td> <td>21/09/2026 10:15</td> <td>20/09/2026</td> <td><span class="badge badge-success">Disponível</span></td> </tr>
+<tr> <td>PCR700001</td> <td>MORMO (ELISA)</td> <td>01/03/2026 08:00</td> <td>01/03/2026</td> <td><span class="badge badge-warning">Aguardando</span></td> </tr>
+</tbody></table>
+<table><thead><tr><th>Aplicação</th><th>Vacina</th><th>Produto</th><th>Próxima</th><th>Situação</th><th></th></tr></thead><tbody>
+<tr> <td>10/01/2026</td> <td>Influenza</td> <td>Fluvac</td> <td>10/07/2027</td> <td><span class="badge">Em dia</span></td> <td><a href="#">x</a></td> </tr>
+</tbody></table>
+<table><thead><tr><th>Aplicação</th><th>Produto</th><th>Dose</th><th>Próxima</th><th>Situação</th><th></th></tr></thead><tbody>
+<tr><td colspan="6">Nenhuma vermifugação registrada.</td></tr>
+</tbody></table>
+<table><thead><tr><th>Data</th><th>Peso</th><th>Variação</th><th>ECC</th><th>Método</th><th>CRMV</th><th></th></tr></thead><tbody>
+<tr> <td>05/02/2026</td> <td>452,5 kg</td> <td>-</td> <td>5</td> <td>Balança</td> <td>6131</td> <td></td> </tr>
+</tbody></table>`);
+
+const EXAM_LIST = page(`
+<table id="example"><thead><tr><th></th><th>Laudo</th><th>Requisição</th><th>Proprietário</th><th>Animal</th><th>Colheita</th><th>Laboratório</th></tr></thead><tbody>
+<tr> <td><div class="notify-thumb-lista"><a href="#" onclick="relatorio('905892')"><i class="ti-printer"></i></a></div> <div class="notify-thumb-lista"><a href="#" onclick="laudo('905892')"><i class="fa fa-file-pdf-o"></i></a></div></td> <td><b><font><span class="status-p bg-success">Disponivel</span></font></b></td> <td><b><font>PCR905892</font></b></td> <td><font>JOÃO DA SILVA</font></td> <td><font>7 OURO</font></td> <td><font>2026-09-20</font></td> <td><font>LAB EXEMPLO</font></td> </tr>
+<tr> <td><div class="notify-thumb-lista"><a href="#" onclick="relatorio('905893')"><i></i></a></div></td> <td><b><font><span class="status-p bg-success"></span></font></b></td> <td><b><font>PCR905893</font></b></td> <td><font>HARAS BOA VISTA</font></td> <td><font>ESTRELA</font></td> <td><font>2026-09-22</font></td> <td><font></font></td> </tr>
+</tbody></table>`);
+
+describe('exames, saúde e arquivos', () => {
+  it('converte datas em vários formatos, inclusive futuras', () => {
+    expect(anyDateToIso('21/09/2026 10:15')).toBe('2026-09-21');
+    expect(anyDateToIso('2026-09-20')).toBe('2026-09-20');
+    expect(anyDateToIso('10/07/2027')).toBe('2027-07-10');
+    expect(anyDateToIso('31/02/2026')).toBeNull();
+    expect(anyDateToIso('-')).toBeNull();
+  });
+
+  it('mapeia tipo de exame e classificação de propriedade', () => {
+    expect(mapExamType('AIE (IDGA)')).toBe('aieidga');
+    expect(mapExamType('MORMO (ELISA)')).toBe('mormoelisa');
+    expect(mapExamType('Brucelose')).toBeNull();
+    expect(mapClassification('H')).toBe('Haras');
+    expect(mapClassification('FC')).toBe('Fazenda');
+    expect(mapClassification('JC')).toBe('Jockey Club');
+    expect(mapClassification('XX')).toBeNull();
+  });
+
+  it('lê exames, histórico, resenho e foto da ficha', () => {
+    const ficha = parseAnimalFicha(FICHA_FULL)!;
+    expect(ficha.exams).toEqual([
+      { number: 'PCR905892', type: 'aieidga', typeLabel: 'AIE (IDGA)', requestedDate: '2026-09-21', collectionDate: '2026-09-20', laudoAvailable: true },
+      { number: 'PCR700001', type: 'mormoelisa', typeLabel: 'MORMO (ELISA)', requestedDate: '2026-03-01', collectionDate: '2026-03-01', laudoAvailable: false },
+    ]);
+    expect(ficha.health).toEqual([
+      { kind: 'vacina', eventDate: '2026-01-10', title: 'Influenza',
+        data: { 'Aplicação': '10/01/2026', 'Vacina': 'Influenza', 'Produto': 'Fluvac', 'Próxima': '10/07/2027', 'Situação': 'Em dia' } },
+      { kind: 'pesagem', eventDate: '2026-02-05', title: '452,5 kg',
+        data: { 'Data': '05/02/2026', 'Peso': '452,5 kg', 'Variação': '-', 'ECC': '5', 'Método': 'Balança', 'CRMV': '6131' } },
+    ]);
+    expect(ficha.resenhoSrc).toBe('uploads/e0ffa1b2.png');
+    expect(ficha.photoSrc).toBe('uploads/foto123.jpg');
+  });
+
+  it('recusa caminhos de imagem fora da pasta de uploads', () => {
+    const html = FICHA_FULL.replace('uploads/e0ffa1b2.png', '../../segredo.png').replace('uploads/foto123.jpg', 'https://outro.site/x.jpg');
+    expect(parseAnimalFicha(html)).toMatchObject({ resenhoSrc: null, photoSrc: null });
+  });
+
+  it('lê a lista de requisições', () => {
+    expect(parseExamList(EXAM_LIST)).toEqual([
+      { code: '905892', number: 'PCR905892', ownerName: 'JOÃO DA SILVA', animalName: '7 OURO', collectionDate: '2026-09-20', laboratory: 'LAB EXEMPLO', laudoAvailable: true },
+      { code: '905893', number: 'PCR905893', ownerName: 'HARAS BOA VISTA', animalName: 'ESTRELA', collectionDate: '2026-09-22', laboratory: null, laudoAvailable: false },
+    ]);
+    expect(parseExamList(OWNER_LIST)).toBeNull();
+  });
+
+  it('lê o detalhe da propriedade e a propriedade da requisição', () => {
+    const edit = page(`<form><input type="text" name="nome_propriedade" value="FAZENDA X"><input type="text" name="endereco_propriedade" value="ZONA RURAL"><input type="text" name="cadastro_oesa" value="1234"><input type="text" name="animais_propriedade" value="18"></form>`);
+    expect(parsePropertyDetail(edit)).toEqual({ address: 'ZONA RURAL', oesaCode: '1234', animalCount: 18 });
+    expect(parsePropertyDetail(OWNER_LIST)).toBeNull();
+
+    const req = page(`<form><input type="text" name="nome_do_animal" value="7 OURO"><input type="text" name="nome_da_propriedade" value="FAZENDA X"><input type="text" name="municipio" value="CAMPO GRANDE"><input type="text" name="uf_propriedade" value="ms"><input type="hidden" name="nome_da_propriedade" value="FAZENDA X"></form>`);
+    expect(parseRequisitionProperty(req)).toEqual({ name: 'FAZENDA X', city: 'Campo Grande', uf: 'MS' });
+  });
+
+  it('só aceita laudo em https no domínio da SGQ', () => {
+    const wrap = (url: string) => `<html><body><object data="${url}" type="application/pdf"></object></body></html>`;
+    expect(parseLaudoUrl(wrap('https://servsa02.sgqsistemas.com.br/a/l1/Laudo 123 - FULANO.pdf')))
+      .toBe('https://servsa02.sgqsistemas.com.br/a/l1/Laudo%20123%20-%20FULANO.pdf');
+    expect(parseLaudoUrl(wrap('http://servsa02.sgqsistemas.com.br/a/x.pdf'))).toBeNull();
+    expect(parseLaudoUrl(wrap('https://evil.example.com/x.pdf'))).toBeNull();
+    expect(parseLaudoUrl(wrap('https://sgqsistemas.com.br.evil.com/x.pdf'))).toBeNull();
+    expect(parseLaudoUrl(wrap('https://servsa02.sgqsistemas.com.br/a/x.exe'))).toBeNull();
+    expect(parseLaudoUrl('<html></html>')).toBeNull();
   });
 });
 
