@@ -457,6 +457,8 @@ export default function EquinoVetForm({ editId = null }: Props) {
           <Field label="Espécie" className="md:col-span-2">
             <select value={species} onChange={e => setSpecies(e.target.value)} style={{ ...inputStyle, appearance: 'auto' }}>
               <option value="">Selecione</option>
+              {/* valor fora do catálogo (ex.: importado do portal SGQ) continua visível */}
+              {species && !(ESPECIES as readonly string[]).includes(species) && <option value={species}>{species}</option>}
               {ESPECIES.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </Field>
@@ -464,6 +466,7 @@ export default function EquinoVetForm({ editId = null }: Props) {
           <Field label="Raça" className="md:col-span-2">
             <select value={breed} onChange={e => setBreed(e.target.value)} style={{ ...inputStyle, appearance: 'auto' }}>
               <option value="">Selecione</option>
+              {breed && !(RACAS as readonly string[]).includes(breed) && <option value={breed}>{breed}</option>}
               {RACAS.map(r => <option key={r} value={r}>{r}</option>)}
             </select>
           </Field>
@@ -471,6 +474,7 @@ export default function EquinoVetForm({ editId = null }: Props) {
           <Field label="Pelagem" className="md:col-span-2">
             <select value={coat} onChange={e => setCoat(e.target.value)} style={{ ...inputStyle, appearance: 'auto' }}>
               <option value="">Selecione</option>
+              {coat && !(PELAGENS as readonly string[]).includes(coat) && <option value={coat}>{coat}</option>}
               {PELAGENS.map(p => <option key={p} value={p}>{p}</option>)}
             </select>
           </Field>

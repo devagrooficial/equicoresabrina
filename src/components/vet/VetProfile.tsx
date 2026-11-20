@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react';
 import { createClient } from '../../lib/supabase';
+import SgqIntegration from './SgqIntegration';
 
 const C = {
   blue:   'hsl(221 83% 53%)',
@@ -44,7 +45,7 @@ export default function VetProfile({
   initialName, initialPhone, initialEmail,
   initialCrmv, initialSpecialty, avatarUrl, createdAt,
 }: VetProfileProps) {
-  const [tab, setTab]           = useState<'perfil' | 'seguranca'>('perfil');
+  const [tab, setTab]           = useState<'perfil' | 'seguranca' | 'integracoes'>('perfil');
   const [name, setName]         = useState(initialName);
   const [phone, setPhone]       = useState(initialPhone);
   const [crmv, setCrmv]         = useState(initialCrmv);
@@ -199,6 +200,7 @@ export default function VetProfile({
       <div style={{ display: 'flex', gap: 4, marginBottom: '1.5rem', background: 'hsl(var(--muted))', padding: 4, borderRadius: '0.75rem' }}>
         <button type="button" style={TAB_STYLE(tab === 'perfil')}    onClick={() => setTab('perfil')}>Perfil</button>
         <button type="button" style={TAB_STYLE(tab === 'seguranca')} onClick={() => setTab('seguranca')}>Segurança</button>
+        <button type="button" style={TAB_STYLE(tab === 'integracoes')} onClick={() => setTab('integracoes')}>Integrações</button>
       </div>
 
       {/* Tab: Perfil */}
@@ -270,6 +272,9 @@ export default function VetProfile({
           </form>
         </div>
       )}
+
+      {/* Tab: Integrações */}
+      {tab === 'integracoes' && <SgqIntegration />}
 
     </main>
   );

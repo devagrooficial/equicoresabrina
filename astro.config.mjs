@@ -8,7 +8,8 @@ import vercel from '@astrojs/vercel';
 // https://astro.build/config
 export default defineConfig({
   output: 'server',
-  adapter: vercel(),
+  // 60s: o passo que importa a lista de animais do portal SGQ grava centenas de linhas
+  adapter: vercel({ maxDuration: 60 }),
   integrations: [react()],
 
   vite: {

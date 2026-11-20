@@ -7,6 +7,7 @@ interface ImportMetaEnv {
   readonly STRIPE_SECRET_KEY: string;
   readonly STRIPE_WEBHOOK_SECRET: string;
   readonly SUPABASE_SERVICE_ROLE_KEY: string;
+  readonly SGQ_CRED_KEY?: string;
 }
 
 interface ImportMeta {
