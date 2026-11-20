@@ -69,8 +69,8 @@ export const POST: APIRoute = async ({ request }) => {
     const claimed = await claimTick(admin, job.id);
     if (!claimed) return json({ job: jobView(job), wait: true }, 200, headers);
 
-    const view = await runTick({ admin, db: session.db, vetId }, claimed);
-    return json({ job: view }, 200, headers);
+    const result = await runTick({ admin, db: session.db, vetId }, claimed);
+    return json(result, 200, headers);
   } catch (err) {
     console.error('[sgq/sync]', action, err);
     return json({ error: 'Falha na sincronização.' }, 500, headers);

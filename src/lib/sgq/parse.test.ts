@@ -122,6 +122,7 @@ describe('listas do portal', () => {
     expect(rows[0]).toEqual({
       code: '698103', name: 'JOÃO DA SILVA & FILHOS', cpfCnpj: '52998224725',
       city: 'São Gabriel do Oeste', uf: 'MS', phone: '(67) 99999-8888', email: 'joao@exemplo.com',
+      raw: { cityUf: 'SÃO GABRIEL DO OESTE - MS', phone: '67999998888' },
     });
     expect(rows[1].cpfCnpj).toBe('11222333000181');
     expect(rows[1].phone).toBeNull();
@@ -130,15 +131,19 @@ describe('listas do portal', () => {
 
   it('lê propriedades', () => {
     expect(parsePropertyList(PROPERTY_LIST)).toEqual([
-      { code: '4501', name: 'FAZENDA SANTA RITA', city: 'Campo Grande', uf: 'MS', classification: null },
-      { code: '4502', name: 'SÍTIO DO VALE', city: 'Sidrolândia', uf: 'MS', classification: 'Outro' },
+      { code: '4501', name: 'FAZENDA SANTA RITA', city: 'Campo Grande', uf: 'MS', classification: null,
+        raw: { cityUf: 'CAMPO GRANDE - MS', classification: 'CR' } },
+      { code: '4502', name: 'SÍTIO DO VALE', city: 'Sidrolândia', uf: 'MS', classification: 'Outro',
+        raw: { cityUf: 'SIDROLÂNDIA - MS', classification: 'OUTRO' } },
     ]);
   });
 
   it('lê animais', () => {
     expect(parseAnimalList(ANIMAL_LIST)).toEqual([
-      { code: '1234567', name: '7 OURO', ownerName: 'JOÃO DA SILVA & FILHOS', breed: 'Sem Raça Definida (SRD)', sex: 'Macho' },
-      { code: '1234568', name: 'ESTRELA', ownerName: 'HARAS BOA VISTA LTDA', breed: 'Pantaneira', sex: 'Fêmea' },
+      { code: '1234567', name: '7 OURO', ownerName: 'JOÃO DA SILVA & FILHOS', breed: 'Sem Raça Definida (SRD)', sex: 'Macho',
+        raw: { breed: 'SRD', sex: 'MACHO' } },
+      { code: '1234568', name: 'ESTRELA', ownerName: 'HARAS BOA VISTA LTDA', breed: 'Pantaneira', sex: 'Fêmea',
+        raw: { breed: 'Pantaneira', sex: 'FÊMEA' } },
     ]);
   });
 
@@ -155,6 +160,7 @@ describe('fichas do portal', () => {
       name: '7 OURO', ownerCode: '698103', registryBrand: 'ABC 123', chip: null,
       species: 'Equina', breed: 'Sem Raça Definida (SRD)', coat: 'Castanha', sex: 'Macho',
       birthDate: '2016-01-01', ageYears: 10, signsDesc: 'Estrela na testa, calçado',
+      raw: { species: 'EQUINA', breed: 'SRD', coat: 'CASTANHO', sex: 'MACHO', birthDate: '01/01/2016', age: '10 anos e 10 meses' },
     });
   });
 

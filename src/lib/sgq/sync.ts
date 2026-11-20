@@ -22,6 +22,7 @@ import {
   parseOwnerList, parsePropertyList,
   type SgqAnimalFicha,
 } from './parse';
+import { maskCpfCnpj } from '../br';
 
 /** Intervalo mínimo entre dois acessos ao portal (aplicado no servidor). */
 export const MIN_INTERVAL_MS = 2_500;
@@ -54,6 +55,40 @@ export interface JobView {
   error: string | null;
   startedAt: string;
   finishedAt: string | null;
+}
+
+/** Um campo do de-para: valor no portal → valor gravado no EquiCore. */
+export interface SyncChange {
+  field: string;            // nome do campo no EquiCore
+  from: string | null;      // como está no portal SGQ
+  to: string | null;        // como fica no EquiCore
+  written: boolean;         // false = o EquiCore já tinha valor e ele foi mantido
+}
+
+/** O que um passo fez — exibido na tela como atividade; não é persistido. */
+export interface SyncEvent {
+  scope: 'owners' | 'properties' | 'animals' | 'animal' | 'owner';
+  title: string;
+  outcome: 'created' | 'updated' | 'unchanged' | 'skipped' | 'error';
+  note?: string;
+  changes: SyncChange[];
+  /** Nas listas: primeiros registros, como amostra do de-para */
+  samples?: { title: string; changes: SyncChange[] }[];
+}
+
+const SAMPLE_SIZE = 5;
+
+function change(field: string, from: string | null | undefined, to: string | null | undefined, written = true): SyncChange | null {
+  if (blank(from) && blank(to)) return null;
+  return { field, from: from || null, to: to || null, written };
+}
+
+const compact = (list: (SyncChange | null)[]): SyncChange[] => list.filter((c): c is SyncChange => c !== null);
+
+const placeLabel = (city: string | null, uf: string | null) => [city, uf].filter(Boolean).join(' / ') || null;
+
+function listNote(found: number, created: number, matched: number, extra?: string): string {
+  return `${found} lidos — ${created} novos, ${matched} já no EquiCore${extra ? `, ${extra}` : ''}`;
 }
 
 export function emptyStats(): SyncStats {
@@ -174,7 +209,7 @@ async function fetchPage(ctx: SyncContext, page: string): Promise<string> {
 
 // ─── Fase 1: proprietários ───────────────────────────────────────────────────
 
-async function syncOwners(ctx: SyncContext, jobId: string, stats: SyncStats) {
+async function syncOwners(ctx: SyncContext, jobId: string, stats: SyncStats): Promise<SyncEvent> {
   const rows = parseOwnerList(await fetchPage(ctx, 'proprietario_lista.php'));
   if (!rows) throw new Error('A lista de proprietários do portal mudou de formato.');
 
@@ -228,11 +263,29 @@ async function syncOwners(ctx: SyncContext, jobId: string, stats: SyncStats) {
 
   await insertChunks(ctx.db, 'vet_owners', inserts);
   await insertChunks(ctx.admin, 'sgq_sync_items', items, 500);
+
+  const { found, created, matched, noCpf } = stats.owners;
+  return {
+    scope: 'owners',
+    title: 'Lista de proprietários',
+    outcome: created ? 'created' : 'unchanged',
+    note: listNote(found, created, matched, noCpf ? `${noCpf} sem CPF/CNPJ (não importados)` : undefined),
+    changes: [],
+    samples: rows.filter(r => r.cpfCnpj.length === 11 || r.cpfCnpj.length === 14).slice(0, SAMPLE_SIZE).map(r => ({
+      title: r.name,
+      changes: compact([
+        change('CPF/CNPJ', r.cpfCnpj, maskCpfCnpj(r.cpfCnpj)),
+        change('Cidade / UF', r.raw.cityUf, placeLabel(r.city, r.uf)),
+        change('Telefone', r.raw.phone, r.phone),
+        change('E-mail', r.email, r.email),
+      ]),
+    })),
+  };
 }
 
 // ─── Fase 2: propriedades ────────────────────────────────────────────────────
 
-async function syncProperties(ctx: SyncContext, stats: SyncStats) {
+async function syncProperties(ctx: SyncContext, stats: SyncStats): Promise<SyncEvent> {
   const rows = parsePropertyList(await fetchPage(ctx, 'propriedade_lista.php'));
   if (!rows) throw new Error('A lista de propriedades do portal mudou de formato.');
 
@@ -271,13 +324,29 @@ async function syncProperties(ctx: SyncContext, stats: SyncStats) {
   }
 
   await insertChunks(ctx.db, 'vet_properties', inserts);
+
+  const { found, created, matched } = stats.properties;
+  return {
+    scope: 'properties',
+    title: 'Lista de propriedades',
+    outcome: created ? 'created' : 'unchanged',
+    note: listNote(found, created, matched),
+    changes: [],
+    samples: rows.slice(0, SAMPLE_SIZE).map(r => ({
+      title: r.name,
+      changes: compact([
+        change('Cidade / UF', r.raw.cityUf, placeLabel(r.city, r.uf)),
+        change('Classificação', r.raw.classification, r.classification, r.classification !== null),
+      ]),
+    })),
+  };
 }
 
 // ─── Fase 3: equinos (lista) ─────────────────────────────────────────────────
 
 const equineKey = (ownerId: string, name: string) => `${ownerId}|${normalizeKey(name)}`;
 
-async function syncAnimals(ctx: SyncContext, jobId: string, stats: SyncStats) {
+async function syncAnimals(ctx: SyncContext, jobId: string, stats: SyncStats): Promise<SyncEvent> {
   const rows = parseAnimalList(await fetchPage(ctx, 'animal_lista.php'));
   if (!rows) throw new Error('A lista de animais do portal mudou de formato.');
 
@@ -358,6 +427,24 @@ async function syncAnimals(ctx: SyncContext, jobId: string, stats: SyncStats) {
     .eq('job_id', jobId).eq('status', 'pending');
   if (error) throw error;
   stats.details = { total: count ?? 0, done: 0, errors: 0 };
+
+  const { found, created, matched } = stats.animals;
+  const waiting = found - created - matched;
+  return {
+    scope: 'animals',
+    title: 'Lista de animais',
+    outcome: created ? 'created' : 'unchanged',
+    note: listNote(found, created, matched, waiting > 0 ? `${waiting} aguardam a ficha para identificar o dono` : undefined),
+    changes: [],
+    samples: rows.slice(0, SAMPLE_SIZE).map(r => ({
+      title: r.name,
+      changes: compact([
+        change('Proprietário', r.ownerName, r.ownerName),
+        change('Raça', r.raw.breed, r.breed),
+        change('Sexo', r.raw.sex, r.sex),
+      ]),
+    })),
+  };
 }
 
 // ─── Fase 4: fichas (uma por passo) ──────────────────────────────────────────
@@ -376,7 +463,25 @@ function fichaToColumns(f: SgqAnimalFicha) {
   };
 }
 
-type ItemResult = { status: 'done' | 'skipped'; note?: string; localId?: string };
+const isoToBr = (iso: string | null) => (iso ? iso.split('-').reverse().join('/') : null);
+
+/** De-para da ficha. `written` = colunas gravadas agora (null = todas, registro novo). */
+function fichaChanges(f: SgqAnimalFicha, written: Set<string> | null): SyncChange[] {
+  const w = (column: string) => written === null || written.has(column);
+  return compact([
+    change('Registro/Marca',      f.registryBrand,  f.registryBrand,                              w('registry_brand')),
+    change('Nº Chip',             f.chip,           f.chip,                                       w('chip')),
+    change('Espécie',             f.raw.species,    f.species,                                    w('species')),
+    change('Raça',                f.raw.breed,      f.breed,                                      w('breed')),
+    change('Pelagem',             f.raw.coat,       f.coat,                                       w('coat')),
+    change('Sexo',                f.raw.sex,        f.sex,                                        w('sex')),
+    change('Data de nascimento',  f.raw.birthDate,  isoToBr(f.birthDate),                         w('birth_date')),
+    change('Idade',               f.raw.age,        f.ageYears !== null ? `${f.ageYears} anos` : null, w('age_years')),
+    change('Descrição de sinais', f.signsDesc,      f.signsDesc,                                  w('signs_desc')),
+  ]);
+}
+
+type ItemResult = { status: 'done' | 'skipped'; note?: string; localId?: string; event: SyncEvent };
 
 async function syncAnimalDetail(ctx: SyncContext, jobId: string, item: any, stats: SyncStats): Promise<ItemResult> {
   const ficha = parseAnimalFicha(await fetchPage(ctx, `animal_ficha.php?cod_animal=${item.sgq_code}`));
@@ -390,10 +495,21 @@ async function syncAnimalDetail(ctx: SyncContext, jobId: string, item: any, stat
         .select('id, registry_brand, chip, species, breed, coat, sex, birth_date, age_years, signs_desc')
         .eq('id', item.local_id).maybeSingle(),
     );
-    if (!local) return { status: 'skipped', note: 'registro removido no EquiCore' };
-    const patch = { ...fillBlanks(local, fichaToColumns(ficha)), sgq_synced_at: syncedAt };
-    await must(ctx.db.from('vet_equines').update(patch).eq('id', local.id));
-    return { status: 'done' };
+    if (!local) {
+      const note = 'registro removido no EquiCore';
+      return { status: 'skipped', note, event: { scope: 'animal', title: ficha.name, outcome: 'skipped', note, changes: [] } };
+    }
+    const filled = fillBlanks(local, fichaToColumns(ficha));
+    await must(ctx.db.from('vet_equines').update({ ...filled, sgq_synced_at: syncedAt }).eq('id', local.id));
+    const written = new Set(Object.keys(filled));
+    return {
+      status: 'done',
+      event: {
+        scope: 'animal', title: ficha.name,
+        outcome: written.size ? 'updated' : 'unchanged',
+        changes: fichaChanges(ficha, written),
+      },
+    };
   }
 
   // Sem vínculo pela lista (homônimo ou nome divergente): resolve pelo código do dono
@@ -407,7 +523,8 @@ async function syncAnimalDetail(ctx: SyncContext, jobId: string, item: any, stat
   if (!ownerId) {
     stats.animals.skipped++;
     addIssue(stats, `Animal não importado (proprietário sem CPF/CNPJ no portal): ${ficha.name}`);
-    return { status: 'skipped', note: 'proprietário sem CPF/CNPJ' };
+    const note = 'proprietário sem CPF/CNPJ no portal';
+    return { status: 'skipped', note, event: { scope: 'animal', title: ficha.name, outcome: 'skipped', note, changes: [] } };
   }
 
   const sameOwner = await must<any[]>(
@@ -417,10 +534,20 @@ async function syncAnimalDetail(ctx: SyncContext, jobId: string, item: any, stat
   const manual = sameOwner.find(e => normalizeKey(e.name) === normalizeKey(ficha.name));
 
   if (manual) {
-    const patch = { ...fillBlanks(manual, fichaToColumns(ficha)), sgq_code: item.sgq_code, sgq_synced_at: syncedAt };
-    await must(ctx.db.from('vet_equines').update(patch).eq('id', manual.id));
+    const filled = fillBlanks(manual, fichaToColumns(ficha));
+    await must(
+      ctx.db.from('vet_equines')
+        .update({ ...filled, sgq_code: item.sgq_code, sgq_synced_at: syncedAt }).eq('id', manual.id),
+    );
     stats.animals.matched++;
-    return { status: 'done', localId: manual.id };
+    return {
+      status: 'done', localId: manual.id,
+      event: {
+        scope: 'animal', title: ficha.name, outcome: 'updated',
+        note: 'vinculado a um animal que já estava cadastrado',
+        changes: fichaChanges(ficha, new Set(Object.keys(filled))),
+      },
+    };
   }
 
   const id = randomUUID();
@@ -429,7 +556,10 @@ async function syncAnimalDetail(ctx: SyncContext, jobId: string, item: any, stat
     ...fichaToColumns(ficha), sgq_code: item.sgq_code, sgq_synced_at: syncedAt,
   }));
   stats.animals.created++;
-  return { status: 'done', localId: id };
+  return {
+    status: 'done', localId: id,
+    event: { scope: 'animal', title: ficha.name, outcome: 'created', changes: fichaChanges(ficha, null) },
+  };
 }
 
 async function syncOwnerDetail(ctx: SyncContext, item: any): Promise<ItemResult> {
@@ -438,10 +568,13 @@ async function syncOwnerDetail(ctx: SyncContext, item: any): Promise<ItemResult>
 
   const local = await must<any>(
     ctx.db.from('vet_owners')
-      .select('id, address, district, cep, producer_number')
+      .select('id, name, address, district, cep, producer_number')
       .eq('id', item.local_id).maybeSingle(),
   );
-  if (!local) return { status: 'skipped', note: 'registro removido no EquiCore' };
+  if (!local) {
+    const note = 'registro removido no EquiCore';
+    return { status: 'skipped', note, event: { scope: 'owner', title: item.label ?? 'Proprietário', outcome: 'skipped', note, changes: [] } };
+  }
 
   const patch = fillBlanks(local, {
     address: detail.address, district: detail.district, cep: detail.cep, producer_number: detail.producerNumber,
@@ -449,31 +582,50 @@ async function syncOwnerDetail(ctx: SyncContext, item: any): Promise<ItemResult>
   if (Object.keys(patch).length) {
     await must(ctx.db.from('vet_owners').update(patch).eq('id', local.id));
   }
-  return { status: 'done' };
+  const w = (column: string) => column in patch;
+  const changes = compact([
+    change('Endereço',       detail.address,        detail.address,        w('address')),
+    change('Bairro',         detail.district,       detail.district,       w('district')),
+    change('CEP',            detail.cep,            detail.cep,            w('cep')),
+    change('Nº do Produtor', detail.producerNumber, detail.producerNumber, w('producer_number')),
+  ]);
+  return {
+    status: 'done',
+    event: {
+      scope: 'owner', title: local.name,
+      outcome: Object.keys(patch).length ? 'updated' : 'unchanged',
+      note: changes.length ? undefined : 'sem endereço cadastrado no portal',
+      changes,
+    },
+  };
 }
 
-/** Processa o próximo item pendente. Devolve false quando a fila acabou. */
-async function syncNextDetail(ctx: SyncContext, jobId: string, stats: SyncStats): Promise<boolean> {
+/** Processa o próximo item pendente. Devolve null quando a fila acabou. */
+async function syncNextDetail(ctx: SyncContext, jobId: string, stats: SyncStats): Promise<SyncEvent | null> {
   // 'animal' < 'owner': as fichas dos animais vêm antes dos endereços
   const item = await must<any>(
     ctx.admin.from('sgq_sync_items').select('*')
       .eq('job_id', jobId).eq('status', 'pending')
       .order('kind').order('id').limit(1).maybeSingle(),
   );
-  if (!item) return false;
+  if (!item) return null;
 
   let update: Record<string, unknown>;
+  let event: SyncEvent;
   try {
     const result = item.kind === 'animal'
       ? await syncAnimalDetail(ctx, jobId, item, stats)
       : await syncOwnerDetail(ctx, item);
     update = { status: result.status, note: result.note ?? null, ...(result.localId ? { local_id: result.localId } : {}) };
+    event = result.event;
     stats.consecutiveErrors = 0;
   } catch (err) {
     // Login recusado ou portal bloqueando: interrompe o job inteiro
     if (err instanceof SgqAuthError || err instanceof SgqBlockedError) throw err;
     console.error('[sgq/sync] item', item.kind, item.sgq_code, err);
-    update = { status: 'error', note: err instanceof Error ? err.message.slice(0, 200) : 'erro' };
+    const note = err instanceof Error ? err.message.slice(0, 200) : 'erro';
+    update = { status: 'error', note };
+    event = { scope: item.kind, title: item.label ?? item.sgq_code, outcome: 'error', note, changes: [] };
     stats.details.errors++;
     stats.consecutiveErrors++;
   }
@@ -484,7 +636,7 @@ async function syncNextDetail(ctx: SyncContext, jobId: string, stats: SyncStats)
   if (stats.consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
     throw new Error('Muitas falhas seguidas ao ler o portal.');
   }
-  return true;
+  return event;
 }
 
 // ─── Orquestração ────────────────────────────────────────────────────────────
@@ -516,9 +668,10 @@ function errorMessage(err: unknown): string {
 }
 
 /** Executa um passo de um job já reservado por claimTick(). */
-export async function runTick(ctx: SyncContext, job: any): Promise<JobView> {
+export async function runTick(ctx: SyncContext, job: any): Promise<{ job: JobView; event: SyncEvent | null }> {
   const stats = withDefaults(job.stats);
   let update: Record<string, unknown>;
+  let event: SyncEvent | null = null;
 
   try {
     let phase: JobView['phase'] = job.phase;
@@ -526,18 +679,18 @@ export async function runTick(ctx: SyncContext, job: any): Promise<JobView> {
     if (phase === 'owners') {
       // Recomeço limpo caso um passo anterior tenha caído no meio
       await must(ctx.admin.from('sgq_sync_items').delete().eq('job_id', job.id));
-      await syncOwners(ctx, job.id, stats);
+      event = await syncOwners(ctx, job.id, stats);
       phase = 'properties';
     } else if (phase === 'properties') {
-      await syncProperties(ctx, stats);
+      event = await syncProperties(ctx, stats);
       phase = 'animals';
     } else if (phase === 'animals') {
       await must(ctx.admin.from('sgq_sync_items').delete().eq('job_id', job.id).eq('kind', 'animal'));
-      await syncAnimals(ctx, job.id, stats);
+      event = await syncAnimals(ctx, job.id, stats);
       phase = 'details';
     } else if (phase === 'details') {
-      const more = await syncNextDetail(ctx, job.id, stats);
-      if (!more) phase = 'done';
+      event = await syncNextDetail(ctx, job.id, stats);
+      if (!event) phase = 'done';
     }
 
     update = { phase, stats, tick_lock_until: new Date(Date.now() + MIN_INTERVAL_MS).toISOString() };
@@ -563,6 +716,7 @@ export async function runTick(ctx: SyncContext, job: any): Promise<JobView> {
     ctx.admin.from('sgq_sync_jobs').update(update)
       .eq('id', job.id).eq('status', 'running').select().maybeSingle(),
   );
-  if (saved) return jobView(saved);
-  return jobView(await must<any>(ctx.admin.from('sgq_sync_jobs').select().eq('id', job.id).single()));
+  if (saved) return { job: jobView(saved), event };
+  const current = await must<any>(ctx.admin.from('sgq_sync_jobs').select().eq('id', job.id).single());
+  return { job: jobView(current), event };
 }

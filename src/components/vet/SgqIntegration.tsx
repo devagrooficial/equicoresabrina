@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Banner, Field, inputStyle, VET_BLUE } from './formUI';
-import type { JobView } from '../../lib/sgq/sync';
+import SgqDePara from './SgqDePara';
+import type { JobView, SyncChange, SyncEvent } from '../../lib/sgq/sync';
 
 // Integração com o Portal Central de Requisições (SGQ Sistemas).
 // O veterinário conecta a própria conta do portal e dispara a importação.
@@ -29,6 +30,10 @@ const C = {
 const STEP_DELAY_MS = 2_800;
 const STEP_JITTER_MS = 1_500;
 const MAX_NETWORK_RETRIES = 3;
+/** Quantos passos ficam visíveis na lista de atividade */
+const MAX_FEED = 60;
+
+interface FeedEntry extends SyncEvent { id: number; at: string }
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
@@ -89,6 +94,122 @@ function StatLine({ label, found, created, matched, extra }: {
   );
 }
 
+// ─── Etapas ──────────────────────────────────────────────────────────────────
+
+const PHASES: JobView['phase'][] = ['owners', 'properties', 'animals', 'details'];
+
+function Steps({ job, active }: { job: JobView; active: boolean }) {
+  const { owners, properties, animals, details } = job.stats;
+  const current = job.phase === 'done' ? PHASES.length : PHASES.indexOf(job.phase);
+  const steps = [
+    { label: 'Proprietários', info: `${owners.found} lidos · ${owners.created} novos` },
+    { label: 'Propriedades',  info: `${properties.found} lidas · ${properties.created} novas` },
+    { label: 'Animais',       info: `${animals.found} lidos · ${animals.created} novos` },
+    { label: 'Fichas',        info: `${details.done} de ${details.total}` },
+  ];
+  return (
+    <ol style={{ listStyle: 'none', padding: 0, margin: '0 0 1rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 8 }}>
+      {steps.map((step, i) => {
+        const done = i < current;
+        const now  = i === current;
+        const color = done ? C.green : now ? VET_BLUE : C.muted;
+        return (
+          <li key={step.label} aria-current={now ? 'step' : undefined}
+              style={{ border: `1px solid ${now ? VET_BLUE : C.border}`, borderRadius: '0.625rem', padding: '0.5rem 0.625rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.8125rem', fontWeight: 700, color }}>
+              <span aria-hidden="true">{done ? '✓' : i + 1}</span>
+              <span style={{ color: done || now ? C.fg : C.muted }}>{step.label}</span>
+            </div>
+            <div style={{ fontSize: '0.75rem', color: C.muted, marginTop: 2 }}>
+              {done || (now && i === 3) ? step.info : now ? (active ? 'lendo…' : 'pausado') : 'aguardando'}
+            </div>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+// ─── Atividade (de-para registro a registro) ─────────────────────────────────
+
+const OUTCOME: Record<SyncEvent['outcome'], { label: string; color: string }> = {
+  created:   { label: 'Novo',        color: 'hsl(142 71% 35%)' },
+  updated:   { label: 'Atualizado',  color: 'hsl(221 83% 53%)' },
+  unchanged: { label: 'Sem mudança', color: 'hsl(var(--muted-foreground))' },
+  skipped:   { label: 'Ignorado',    color: 'hsl(35 92% 40%)' },
+  error:     { label: 'Erro',        color: 'hsl(0 84.2% 55%)' },
+};
+
+const SCOPE: Record<SyncEvent['scope'], string> = {
+  owners: 'Lista', properties: 'Lista', animals: 'Lista', animal: 'Animal', owner: 'Proprietário',
+};
+
+function Changes({ changes }: { changes: SyncChange[] }) {
+  if (!changes.length) return null;
+  return (
+    <table style={{ borderCollapse: 'collapse', marginTop: 4, width: '100%' }}>
+      <tbody>
+        {changes.map(c => (
+          <tr key={c.field} style={{ opacity: c.written ? 1 : 0.6 }}>
+            <td style={{ fontSize: '0.75rem', color: C.muted, padding: '1px 8px 1px 0', whiteSpace: 'nowrap', verticalAlign: 'top' }}>{c.field}</td>
+            <td style={{ fontSize: '0.75rem', color: C.fg, padding: '1px 0', wordBreak: 'break-word' }}>
+              {c.from ?? '—'}
+              {(c.to !== c.from || !c.written) && (
+                <>
+                  <span aria-label="vira" style={{ color: C.muted }}> → </span>
+                  {c.to === null
+                    ? <em style={{ color: C.muted }}>não importado</em>
+                    : <strong>{c.to}</strong>}
+                </>
+              )}
+              {!c.written && c.to !== null && <span style={{ color: C.muted }}> (já estava preenchido no EquiCore)</span>}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function Feed({ entries }: { entries: FeedEntry[] }) {
+  if (!entries.length) return null;
+  return (
+    <section style={{ marginTop: '1.25rem' }} aria-label="Atividade da sincronização">
+      <h3 style={{ fontSize: '0.875rem', fontWeight: 700, color: C.fg, marginBottom: 2 }}>Atividade</h3>
+      <p style={{ fontSize: '0.75rem', color: C.muted, marginBottom: '0.5rem' }}>
+        Cada linha é uma página lida no portal: à esquerda o valor de lá, à direita como ficou no EquiCore.
+      </p>
+      <ul style={{ listStyle: 'none', margin: 0, padding: 0, maxHeight: 380, overflowY: 'auto', border: `1px solid ${C.border}`, borderRadius: '0.625rem' }}>
+        {entries.map((e, i) => (
+          <li key={e.id} style={{ padding: '0.5rem 0.75rem', borderTop: i ? `1px solid ${C.border}` : 'none' }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 6 }}>
+              <span style={{ fontSize: '0.6875rem', fontWeight: 700, color: OUTCOME[e.outcome].color }}>{OUTCOME[e.outcome].label}</span>
+              <span style={{ fontSize: '0.6875rem', color: C.muted }}>{SCOPE[e.scope]}</span>
+              <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: C.fg }}>{e.title}</span>
+              <span style={{ fontSize: '0.6875rem', color: C.muted, marginLeft: 'auto' }}>{e.at}</span>
+            </div>
+            {e.note && <p style={{ fontSize: '0.75rem', color: C.muted, marginTop: 2 }}>{e.note}</p>}
+            <Changes changes={e.changes} />
+            {e.samples && e.samples.length > 0 && (
+              <details style={{ marginTop: 4 }}>
+                <summary style={{ fontSize: '0.75rem', fontWeight: 600, color: C.fg, cursor: 'pointer' }}>
+                  Ver amostra ({e.samples.length} primeiros)
+                </summary>
+                {e.samples.map(sample => (
+                  <div key={sample.title} style={{ marginTop: 6 }}>
+                    <div style={{ fontSize: '0.75rem', fontWeight: 600, color: C.fg }}>{sample.title}</div>
+                    <Changes changes={sample.changes} />
+                  </div>
+                ))}
+              </details>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function JobSummary({ job }: { job: JobView }) {
   const { owners, properties, animals, details, issues } = job.stats;
   const listsRead = job.phase === 'details' || job.phase === 'done';
@@ -137,7 +258,19 @@ export default function SgqIntegration() {
   const [consent, setConsent]   = useState(false);
   const [busy, setBusy]         = useState(false);
   const [syncing, setSyncing]   = useState(false);
+  const [feed, setFeed]         = useState<FeedEntry[]>([]);
   const loopActive = useRef(false);
+  const feedId = useRef(0);
+
+  const pushEvent = (event: SyncEvent | null | undefined) => {
+    if (!event) return;
+    const entry: FeedEntry = {
+      ...event,
+      id: ++feedId.current,
+      at: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+    };
+    setFeed(prev => [entry, ...prev].slice(0, MAX_FEED));
+  };
 
   useEffect(() => {
     api<Status>('/api/sgq/status', 'GET')
@@ -161,7 +294,7 @@ export default function SgqIntegration() {
       setJob(started.job);
 
       while (loopActive.current) {
-        let res: { job: JobView | null; wait?: boolean };
+        let res: { job: JobView | null; wait?: boolean; event?: SyncEvent | null };
         try {
           res = await api('/api/sgq/sync', 'POST', { action: 'tick' });
           failures = 0;
@@ -174,6 +307,7 @@ export default function SgqIntegration() {
 
         if (!res.job) break;
         setJob(res.job);
+        pushEvent(res.event);
         if (res.job.status !== 'running') {
           if (res.job.status === 'done') {
             setStatus(prev => (prev ? { ...prev, lastSyncAt: res.job!.finishedAt } : prev));
@@ -315,6 +449,8 @@ export default function SgqIntegration() {
             </span>
           </div>
 
+          {job && job.status !== 'cancelled' && <Steps job={job} active={syncing} />}
+
           {jobRunning && job && (
             <div style={{ marginBottom: '1.25rem' }}>
               <p style={{ fontSize: '0.875rem', fontWeight: 600, color: C.fg, marginBottom: '0.5rem' }}>
@@ -371,11 +507,22 @@ export default function SgqIntegration() {
 
           {job && job.status !== 'cancelled' && <JobSummary job={job} />}
 
+          <Feed entries={feed} />
+
           <p style={{ fontSize: '0.75rem', color: C.muted, marginTop: '1.25rem', lineHeight: 1.5 }}>
             Animais importados só ficam visíveis ao proprietário depois que você ativar o compartilhamento em Registros.
             Proprietários sem CPF/CNPJ no portal não são importados, porque o CPF é o que liga o dono ao cadastro dele no EquiCore.
           </p>
         </>
+      )}
+
+      {status.configured && (
+        <details style={{ marginTop: '1.25rem', borderTop: `1px solid ${C.border}`, paddingTop: '1rem' }}>
+          <summary style={{ fontSize: '0.875rem', fontWeight: 700, color: C.fg, cursor: 'pointer' }}>
+            De-para: o que vem do portal SGQ para o EquiCore
+          </summary>
+          <SgqDePara />
+        </details>
       )}
     </div>
   );

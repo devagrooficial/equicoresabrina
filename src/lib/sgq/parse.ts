@@ -161,6 +161,8 @@ export interface SgqOwnerRow {
   uf: string | null;
   phone: string | null;
   email: string | null;
+  /** Valores como aparecem no portal (para exibir o de-para) */
+  raw: { cityUf: string; phone: string };
 }
 
 /** proprietario_lista.php — null quando a página não tem a tabela esperada. */
@@ -182,6 +184,7 @@ export function parseOwnerList(html: string): SgqOwnerRow[] | null {
       ...splitCityUf(td[3].text),
       phone: formatPhone(td[4].text),
       email: /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) ? email : null,
+      raw: { cityUf: clean(td[3].text), phone: clean(td[4].text) },
     });
   }
   return out;
@@ -193,6 +196,7 @@ export interface SgqPropertyRow {
   city: string | null;
   uf: string | null;
   classification: string | null;
+  raw: { cityUf: string; classification: string };
 }
 
 /** propriedade_lista.php */
@@ -212,6 +216,7 @@ export function parsePropertyList(html: string): SgqPropertyRow[] | null {
       ...splitCityUf(td[2].text),
       // O portal usa siglas próprias (CR, FC, JC…) sem equivalência no EquiCore
       classification: normalizeKey(td[3].text) === 'outro' ? 'Outro' : null,
+      raw: { cityUf: clean(td[2].text), classification: clean(td[3].text) },
     });
   }
   return out;
@@ -223,6 +228,7 @@ export interface SgqAnimalRow {
   ownerName: string;
   breed: string | null;
   sex: string | null;
+  raw: { breed: string; sex: string };
 }
 
 /** animal_lista.php */
@@ -243,6 +249,7 @@ export function parseAnimalList(html: string): SgqAnimalRow[] | null {
       ownerName: clean(td[3].text),
       breed: mapBreed(td[4].text),
       sex: mapSex(td[5].text),
+      raw: { breed: clean(td[4].text), sex: clean(td[5].text) },
     });
   }
   return out;
@@ -273,6 +280,8 @@ export interface SgqAnimalFicha {
   birthDate: string | null;   // ISO
   ageYears: number | null;
   signsDesc: string | null;
+  /** Valores como aparecem no portal (para exibir o de-para) */
+  raw: { species: string; breed: string; coat: string; sex: string; birthDate: string; age: string };
 }
 
 /** animal_ficha.php?cod_animal=N — null quando o formulário de cadastro não está na página. */
@@ -280,9 +289,17 @@ export function parseAnimalFicha(html: string, today: Date = new Date()): SgqAni
   const root = parse(html);
   if (!root.querySelector('[name="nome_animal"]')) return null;
 
+  const raw = {
+    species:   inputValue(root, 'cod_especie'),
+    breed:     inputValue(root, 'cod_raca'),
+    coat:      inputValue(root, 'cod_pelagem'),
+    sex:       inputValue(root, 'sexo'),
+    birthDate: inputValue(root, 'data_nascimento'),
+    age:       inputValue(root, 'idade'),
+  };
   const ownerCode = inputValue(root, 'cod_prop');
-  const birthDate = brDateToIso(inputValue(root, 'data_nascimento'));
-  const ageText   = inputValue(root, 'idade').match(/^(\d{1,2})\s*ano/i)?.[1];
+  const birthDate = brDateToIso(raw.birthDate);
+  const ageText   = raw.age.match(/^(\d{1,2})\s*ano/i)?.[1];
   const ageYears  = birthDate
     ? ageFromBirthDate(birthDate, today)
     : ageText ? parseInt(ageText, 10) : null;
@@ -292,13 +309,14 @@ export function parseAnimalFicha(html: string, today: Date = new Date()): SgqAni
     ownerCode:     /^\d+$/.test(ownerCode) ? ownerCode : null,
     registryBrand: meaningful(inputValue(root, 'registro')),
     chip:          meaningful(inputValue(root, 'chip')),
-    species:       mapSpecies(inputValue(root, 'cod_especie')),
-    breed:         mapBreed(inputValue(root, 'cod_raca')),
-    coat:          mapCoat(inputValue(root, 'cod_pelagem')),
-    sex:           mapSex(inputValue(root, 'sexo')),
+    species:       mapSpecies(raw.species),
+    breed:         mapBreed(raw.breed),
+    coat:          mapCoat(raw.coat),
+    sex:           mapSex(raw.sex),
     birthDate,
     ageYears,
     signsDesc:     meaningful(inputValue(root, 'descricao_sinais')),
+    raw,
   };
 }
 
