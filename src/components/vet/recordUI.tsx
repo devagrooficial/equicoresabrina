@@ -297,6 +297,8 @@ export interface ExamForCard {
   collection_date: string | null;
   laboratory: string | null;
   laudo_available: boolean;
+  /** Código no portal SGQ; nulo = exame lançado manualmente */
+  sgq_code?: string | null;
 }
 
 /** AIE e mormo lado a lado: o exame mais recente de cada um, com a validade. */
@@ -339,10 +341,12 @@ export function SanitaryCards({ exams }: { exams: readonly ExamForCard[] }) {
                   {exam.laudo_available ? (
                     <a href={`/api/sgq/laudo?id=${exam.id}`} target="_blank" rel="noreferrer" className="rec-link"
                        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.8125rem', fontWeight: 600, color: VET_BLUE }}>
-                      <Icon d={ICON.file} size={14} /> Abrir laudo (PDF)
+                      <Icon d={ICON.file} size={14} /> Abrir laudo
                     </a>
                   ) : (
-                    <span style={{ fontSize: '0.8125rem', color: C.muted }}>Laudo aguardando o laboratório</span>
+                    <span style={{ fontSize: '0.8125rem', color: C.muted }}>
+                      {exam.sgq_code === null ? 'Sem laudo anexado' : 'Laudo aguardando o laboratório'}
+                    </span>
                   )}
                 </div>
               </>

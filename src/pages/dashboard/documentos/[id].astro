@@ -43,6 +43,7 @@ interface Exam {
   collection_date: string | null;
   laboratory: string | null;
   laudo_available: boolean;
+  sgq_code: string | null;   // nulo = exame lançado manualmente pelo veterinário
 }
 interface HealthRecord {
   id: string;
@@ -70,7 +71,7 @@ const propertyPlace = property ? [property.city, property.uf].filter(Boolean).jo
 
 const [examsRes, healthRes] = await Promise.all([
   supabase.from('vet_equine_exams')
-    .select('id, exam_type, number, collection_date, laboratory, laudo_available')
+    .select('id, exam_type, number, collection_date, laboratory, laudo_available, sgq_code')
     .eq('equine_id', id)
     .order('collection_date', { ascending: false, nullsFirst: false }),
   supabase.from('vet_equine_health_records')
@@ -230,10 +231,10 @@ const GREEN = 'hsl(168 83% 29%)';
                        class="inline-flex items-center justify-center gap-2 w-full text-sm font-semibold px-4 py-2.5 rounded-xl text-white no-underline"
                        style={`background: ${GREEN};`}>
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>
-                      Abrir laudo (PDF)
+                      Abrir laudo
                     </a>
                   ) : (
-                    <p class="text-sm text-muted-foreground text-center py-2.5">Laudo aguardando o laboratório</p>
+                    <p class="text-sm text-muted-foreground text-center py-2.5">{exam.sgq_code ? 'Laudo aguardando o laboratório' : 'Laudo não anexado pelo veterinário'}</p>
                   )}
                 </div></div>
               </>
@@ -318,7 +319,7 @@ const GREEN = 'hsl(168 83% 29%)';
                     Laudo ↗
                   </a>
                 ) : (
-                  <span class="text-xs text-muted-foreground flex-shrink-0">Aguardando</span>
+                  <span class="text-xs text-muted-foreground flex-shrink-0">{exam.sgq_code ? 'Aguardando' : 'Sem laudo'}</span>
                 )}
               </li>
             );

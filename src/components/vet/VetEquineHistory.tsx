@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { createClient, isValidUUID, resolveDocUrl } from '../../lib/supabase';
-import { EXAM_LABEL, HEALTH_KINDS, HEALTH_LABEL, type ExamType, type HealthKind } from '../../lib/sgq/labels';
+import { EXAM_LABEL, HEALTH_KINDS, HEALTH_LABEL, type HealthKind } from '../../lib/sgq/labels';
 import { examValidity, EXAM_VALIDITY_DAYS, formatBrDate, overallState } from '../../lib/examStatus';
 import { maskCpfCnpj } from '../../lib/br';
 import { cityUf, plural } from '../../lib/vetRecords';
 import { Lightbox, useLightbox } from '../shared/Lightbox';
 import { PHOTO_SLOTS } from '../shared/EquinePhotos';
 import { Banner, VET_BLUE } from './formUI';
+import ExamDialog, { EXAM_COLUMNS, isManualExam, type ExamRecord } from './ExamDialog';
 import {
   Avatar, ButtonLink, C, Chip, Crumbs, EmptyLinkCard, HEALTH_TITLE, ICON, Icon, Info, LinkCard, Loading,
   SanitaryCards, Section, Shell, TONE,
@@ -14,7 +15,8 @@ import {
 
 // Ficha do animal na área veterinária: quem é, de quem é e onde está
 // (proprietário e propriedade), situação sanitária, exames com laudo e
-// histórico de saúde. Exames e histórico vêm da sincronização com o portal SGQ.
+// histórico de saúde. Exames vêm da sincronização com o portal SGQ ou são
+// lançados à mão aqui (ExamDialog); o histórico vem só da sincronização.
 
 interface Owner {
   id: string;
@@ -56,15 +58,10 @@ interface Equine {
   property: Property | null;
 }
 
-interface Exam {
-  id: string;
-  exam_type: ExamType;
-  number: string;
-  requested_date: string | null;
-  collection_date: string | null;
-  laboratory: string | null;
-  laudo_available: boolean;
-}
+type Exam = ExamRecord;
+
+/** Mais recentes primeiro; exames sem data de colheita no fim. */
+const byCollection = (a: Exam, b: Exam) => (b.collection_date ?? '').localeCompare(a.collection_date ?? '');
 
 interface HealthRecord {
   id: string;
@@ -84,6 +81,10 @@ const th: React.CSSProperties = {
 };
 const td: React.CSSProperties = {
   padding: '0.5rem 0.625rem', fontSize: '0.8125rem', color: C.fg, borderTop: `1px solid ${C.border}`, verticalAlign: 'top',
+};
+
+const rowAction: React.CSSProperties = {
+  padding: '2px 6px', border: 'none', background: 'none', cursor: 'pointer', fontSize: '0.8125rem', fontWeight: 600,
 };
 
 const isImage = (path: string | null | undefined) => !!path && /\.(png|jpe?g|webp)$/i.test(path.split('?')[0]);
@@ -117,6 +118,26 @@ export default function VetEquineHistory({ equineId }: { equineId: string }) {
   const [error, setError]       = useState<string | null>(null);
   const [sharing, setSharing]   = useState(false);
   const lightbox                = useLightbox();
+  // Formulário de exame: 'new' para lançar um, ou o exame manual em edição
+  const [examForm, setExamForm] = useState<'new' | Exam | null>(null);
+  const [notice, setNotice]     = useState<string | null>(null);
+
+  function examSaved(saved: Exam, created: boolean) {
+    setExams(prev => [...prev.filter(e => e.id !== saved.id), saved].sort(byCollection));
+    setExamForm(null);
+    setNotice(created ? 'Exame adicionado.' : 'Exame atualizado.');
+  }
+
+  async function deleteExam(exam: Exam) {
+    if (!confirm(`Excluir o exame ${exam.number}? O laudo anexado também será apagado. Esta ação não pode ser desfeita.`)) return;
+    const supabase = createClient();
+    const { error: err } = await supabase.from('vet_equine_exams').delete().eq('id', exam.id);
+    if (err) { alert('Não foi possível excluir o exame. Tente novamente.'); return; }
+    // Só depois de a linha sair, para nunca apagar o laudo de um exame que continua existindo
+    if (exam.laudo_path) await supabase.storage.from('docs').remove([exam.laudo_path]);
+    setExams(prev => prev.filter(e => e.id !== exam.id));
+    setNotice('Exame excluído.');
+  }
 
   useEffect(() => {
     if (!isValidUUID(equineId)) { setError('Animal inválido.'); setLoading(false); return; }
@@ -125,7 +146,7 @@ export default function VetEquineHistory({ equineId }: { equineId: string }) {
       const [first, ex, he] = await Promise.all([
         supabase.from('vet_equines').select(`${BASE_COLUMNS}, portal_photo_url, marca_fogo_url`).eq('id', equineId).maybeSingle(),
         supabase.from('vet_equine_exams')
-          .select('id, exam_type, number, requested_date, collection_date, laboratory, laudo_available')
+          .select(EXAM_COLUMNS)
           .eq('equine_id', equineId)
           .order('collection_date', { ascending: false, nullsFirst: false }),
         supabase.from('vet_equine_health_records')
@@ -353,13 +374,21 @@ export default function VetEquineHistory({ equineId }: { equineId: string }) {
       </Section>
 
       {/* ── Exames ── */}
-      <Section title="Exames" count={exams.length}>
+      <Section title="Exames" count={exams.length} aside={
+        <button type="button" onClick={() => { setNotice(null); setExamForm('new'); }} className="rec-btn"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '0.4375rem 0.875rem', borderRadius: '0.625rem', fontSize: '0.8125rem', fontWeight: 600, background: VET_BLUE, color: '#fff', border: 'none', cursor: 'pointer' }}>
+          <Icon d={ICON.plus} size={14} /> Adicionar exame
+        </button>
+      }>
+        {notice && <div role="status"><Banner kind="success">{notice}</Banner></div>}
         {exams.length === 0 ? (
-          <p style={{ fontSize: '0.875rem', color: C.muted }}>Nenhum exame registrado para este animal.</p>
+          <p style={{ fontSize: '0.875rem', color: C.muted, lineHeight: 1.6 }}>
+            Nenhum exame registrado para este animal. Use “Adicionar exame” para lançar um exame de AIE ou mormo e anexar o laudo.
+          </p>
         ) : (
           <>
             <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 620 }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 700 }}>
                 <thead><tr>
                   <th style={th}>Exame</th>
                   <th style={th}>Requisição</th>
@@ -367,13 +396,19 @@ export default function VetEquineHistory({ equineId }: { equineId: string }) {
                   <th style={th}>Validade</th>
                   <th style={th}>Laboratório</th>
                   <th style={th}>Laudo</th>
+                  {/* aria-label em vez de texto escondido: um sr-only (position: absolute) dentro da área com rolagem alarga a página no celular */}
+                  <th style={th} aria-label="Ações" />
                 </tr></thead>
                 <tbody>
                   {exams.map(exam => {
                     const v = examValidity(exam.collection_date);
+                    const manual = isManualExam(exam);
                     return (
                       <tr key={exam.id}>
-                        <td style={{ ...td, fontWeight: 600 }}>{EXAM_LABEL[exam.exam_type] ?? exam.exam_type}</td>
+                        <td style={{ ...td, fontWeight: 600 }}>
+                          {EXAM_LABEL[exam.exam_type] ?? exam.exam_type}
+                          {manual && <span style={{ display: 'block', fontSize: '0.6875rem', fontWeight: 500, color: C.muted }}>lançado manualmente</span>}
+                        </td>
                         <td style={td}>{exam.number}</td>
                         <td style={td}>{formatBrDate(exam.collection_date)}</td>
                         <td style={td}>
@@ -389,9 +424,23 @@ export default function VetEquineHistory({ equineId }: { equineId: string }) {
                           {exam.laudo_available ? (
                             <a href={`/api/sgq/laudo?id=${exam.id}`} target="_blank" rel="noreferrer" className="rec-link"
                                style={{ color: VET_BLUE, fontWeight: 600 }}>
-                              Abrir PDF
+                              Abrir laudo
                             </a>
-                          ) : <span style={{ color: C.muted }}>Aguardando</span>}
+                          ) : <span style={{ color: C.muted }}>{manual ? 'Sem laudo' : 'Aguardando'}</span>}
+                        </td>
+                        <td style={{ ...td, whiteSpace: 'nowrap', textAlign: 'right' }}>
+                          {manual && (
+                            <>
+                              <button type="button" onClick={() => { setNotice(null); setExamForm(exam); }} title={`Editar o exame ${exam.number}`}
+                                      style={{ ...rowAction, color: VET_BLUE }}>
+                                Editar
+                              </button>
+                              <button type="button" onClick={() => deleteExam(exam)} title={`Excluir o exame ${exam.number}`}
+                                      style={{ ...rowAction, color: TONE.expired.color }}>
+                                Excluir
+                              </button>
+                            </>
+                          )}
                         </td>
                       </tr>
                     );
@@ -400,7 +449,8 @@ export default function VetEquineHistory({ equineId }: { equineId: string }) {
               </table>
             </div>
             <p style={{ fontSize: '0.75rem', color: C.muted, marginTop: '0.75rem', lineHeight: 1.5 }}>
-              Os PDFs são guardados no EquiCore durante a sincronização.
+              Os laudos do portal SGQ são guardados no EquiCore durante a sincronização. Exames lançados manualmente podem
+              ser editados e excluídos aqui.
             </p>
           </>
         )}
@@ -433,6 +483,15 @@ export default function VetEquineHistory({ equineId }: { equineId: string }) {
           ))
         )}
       </Section>
+
+      {examForm && (
+        <ExamDialog
+          equine={{ id: equine.id, vet_id: equine.vet_id, name: equine.name, ownerName: owner?.name ?? null }}
+          exam={examForm === 'new' ? null : examForm}
+          onClose={() => setExamForm(null)}
+          onSaved={examSaved}
+        />
+      )}
 
       <Lightbox src={lightbox.src} onClose={lightbox.close} />
     </Shell>
