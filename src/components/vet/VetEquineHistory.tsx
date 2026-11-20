@@ -236,8 +236,8 @@ export default function VetEquineHistory({ equineId }: { equineId: string }) {
               </table>
             </div>
             <p style={{ fontSize: '0.75rem', color: C.muted, marginTop: '0.75rem', lineHeight: 1.5 }}>
-              Validade estimada em {EXAM_VALIDITY_DAYS} dias após a colheita; confira a data no laudo. O PDF é buscado
-              no portal SGQ na primeira vez que você abre e fica guardado no EquiCore.
+              Validade estimada em {EXAM_VALIDITY_DAYS} dias após a colheita; confira a data no laudo. Os PDFs são
+              guardados no EquiCore durante a sincronização.
             </p>
           </>
         )}

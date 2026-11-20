@@ -3,7 +3,7 @@
 // O cliente se identifica pelo User-Agent e não tenta contornar bloqueios —
 // se o portal recusar o acesso, a sincronização para.
 
-import { isLoggedInHtml } from './parse';
+import { isLoggedInHtml, isLoginHtml } from './parse';
 
 const BASE = 'https://portal.sgqsistemas.com.br';
 const USER_AGENT = 'EquiCoreSync/1.0 (importacao solicitada pelo titular da conta)';
@@ -29,6 +29,11 @@ const READABLE = [
   /^requisicao_(aieidga|aieelisa|mormoelisa)_resenha_laudo\.php\?cod_requisicoes=\d+$/,
   /^index\.php$/,
 ];
+
+// Páginas que abrem em janela própria, sem o menu do portal — logo, sem o link
+// de sair que identifica a área logada. Nelas a sessão vale se a resposta não
+// for a tela de login (sem sessão o portal redireciona para ela).
+const MENULESS = /_resenha_laudo\.php\?/;
 
 class CookieJar {
   private jar = new Map<string, string>();
@@ -117,7 +122,8 @@ export async function sgqGet(cookie: string, page: string): Promise<{ html: stri
   const res = await request(`${BASE}/pages/forms/${page}`, new CookieJar(cookie));
   if (res.status !== 200) return { html: '', loggedIn: false };
   const html = await res.text();
-  return { html, loggedIn: isLoggedInHtml(html) };
+  const loggedIn = isLoggedInHtml(html) || (MENULESS.test(page) && html.trim() !== '' && !isLoginHtml(html));
+  return { html, loggedIn };
 }
 
 export interface SgqFile {

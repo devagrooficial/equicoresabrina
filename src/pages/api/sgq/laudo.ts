@@ -2,9 +2,8 @@ import type { APIRoute } from 'astro';
 import { createServerSupabaseClient, isValidUUID } from '../../../lib/supabase';
 import { getSupabaseAdmin } from '../../../lib/supabaseAdmin';
 import { isSgqConfigured } from '../../../lib/sgq/crypto';
-import { sgqGetLaudo, SgqAuthError, SgqBlockedError } from '../../../lib/sgq/client';
-import { parseLaudoUrl } from '../../../lib/sgq/parse';
-import { fetchPage } from '../../../lib/sgq/sync';
+import { SgqAuthError, SgqBlockedError } from '../../../lib/sgq/client';
+import { importLaudo } from '../../../lib/sgq/sync';
 
 export const prerender = false;
 
@@ -16,9 +15,10 @@ function message(text: string, status: number, headers: Headers): Response {
   return res;
 }
 
-// Abre o laudo (PDF) de um exame. Na primeira vez busca no portal SGQ com a
-// integração do veterinário e guarda no bucket docs; depois serve direto do
-// EquiCore. Assim nenhum laudo é baixado em massa: só os que alguém abre.
+// Abre o laudo (PDF) de um exame. A sincronização já guarda os PDFs no bucket
+// docs; se este ainda não foi baixado (laudo liberado depois da última
+// sincronização), busca agora no portal SGQ com a integração do veterinário,
+// guarda e passa a servir direto do EquiCore.
 //
 // Quem pode abrir é decidido pelo RLS de vet_equine_exams: o veterinário dono
 // do exame, ou o proprietário de um animal que o veterinário compartilhou.
@@ -62,24 +62,12 @@ export const GET: APIRoute = async ({ request, url }) => {
   }
 
   try {
-    const ctx = { admin, db: admin, vetId };
-    const page = await fetchPage(ctx, `requisicao_${exam.exam_type}_resenha_laudo.php?cod_requisicoes=${exam.sgq_code}`);
-    const laudoUrl = parseLaudoUrl(page);
-    if (!laudoUrl) return message('O portal SGQ ainda não disponibilizou o laudo deste exame.', 404, headers);
-
-    const file = await sgqGetLaudo(laudoUrl);
-    if (!file) return message('Não foi possível baixar o laudo no portal SGQ. Tente novamente mais tarde.', 502, headers);
-
-    const folder = exam.equine_id ? `equinos/${exam.equine_id}` : 'exames';
-    const name = String(exam.number).replace(/[^A-Za-z0-9_-]/g, '');
-    const path = `${vetId}/${folder}/laudo-${name}.pdf`;
-
-    const { error: uploadError } = await admin.storage.from('docs')
-      .upload(path, file.bytes, { contentType: 'application/pdf', upsert: true });
-    if (uploadError) throw uploadError;
-
-    await admin.from('vet_equine_exams').update({ laudo_path: path, laudo_available: true }).eq('id', exam.id);
-    return redirectTo(path);
+    const result = await importLaudo({ admin, db: admin, vetId }, exam);
+    if (result.path !== null) return redirectTo(result.path);
+    if (result.reason === 'unavailable') {
+      return message('O portal SGQ ainda não disponibilizou o laudo deste exame.', 404, headers);
+    }
+    return message('Não foi possível baixar o laudo no portal SGQ. Tente novamente mais tarde.', 502, headers);
   } catch (err) {
     if (err instanceof SgqAuthError) {
       return message('Não foi possível acessar o portal SGQ com a conta do veterinário. Ele precisa reconectar a integração.', 502, headers);

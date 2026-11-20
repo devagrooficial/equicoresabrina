@@ -7,6 +7,9 @@ const pages = new Map<string, string>();
 const requested: string[] = [];
 /** Páginas que o portal simulado nunca responde */
 const hanging = new Set<string>();
+/** PDFs que o servidor de laudos não entrega / recusa */
+const missingFiles = new Set<string>();
+const blockedFiles = new Set<string>();
 
 vi.mock('./client', () => {
   class SgqAuthError extends Error {}
@@ -26,6 +29,12 @@ vi.mock('./client', () => {
     sgqGetUpload: async (src: string) => {
       requested.push(src);
       return { bytes: new Uint8Array([1, 2, 3]), contentType: 'image/png', ext: 'png' };
+    },
+    sgqGetLaudo: async (url: string) => {
+      requested.push(url);
+      if (blockedFiles.has(url)) throw new SgqBlockedError('403');
+      if (missingFiles.has(url)) return null;
+      return { bytes: new Uint8Array([37, 80, 68, 70]), contentType: 'application/pdf', ext: 'pdf' };
     },
   };
 });
@@ -91,6 +100,7 @@ class Query {
   is(col: string, _value: null) { this.filters.push(r => r[col] == null); return this; }
   not(col: string, _op: string, _value: null) { this.filters.push(r => r[col] != null); return this; }
   in(col: string, values: any[]) { this.filters.push(r => values.includes(r[col])); return this; }
+  gt(col: string, value: any) { this.filters.push(r => r[col] > value); return this; }
   order(col: string, opts?: { ascending?: boolean }) { this.orders.push({ col, asc: opts?.ascending !== false }); return this; }
   limit(n: number) { this.window = [0, n - 1]; return this; }
   range(from: number, to: number) { this.window = [from, to]; return this; }
@@ -150,6 +160,8 @@ const editLink = (code: string) => `<td><a href="#" onclick="editar('${code}')">
 function setupPortal() {
   pages.clear();
   hanging.clear();
+  missingFiles.clear();
+  blockedFiles.clear();
   requested.length = 0;
 
   pages.set('proprietario_lista.php', page(`<table id="example"><thead><tr><th></th><th>Proprietário</th><th>CPF/CNPJ</th><th>Cidade - UF</th><th>Telefone</th><th>E-mail</th></tr></thead><tbody>
@@ -224,7 +236,17 @@ function setupPortal() {
   // TROVÃO: a requisição mais recente é a PCR901 (aieidga:901); ESTRELA: aieidga:902
   pages.set('requisicao_aieidga_editar.php?cod_requisicoes=901', requisition('HARAS DO SOL', 'CAMPO GRANDE', 'MS'));
   pages.set('requisicao_aieidga_editar.php?cod_requisicoes=902', requisition('FAZENDA DESCONHECIDA', 'CUIABÁ', 'MT'));
+
+  // Página do laudo: abre sem o menu do portal e embute o PDF de outro servidor
+  for (const [type, code] of [['aieidga', '900'], ['aieidga', '902'], ['mormoelisa', '950']]) {
+    pages.set(`requisicao_${type}_resenha_laudo.php?cod_requisicoes=${code}`,
+      `<html><body><object data="${laudoUrl(code)}" type="application/pdf"><a href="${laudoUrl(code)}" download>Baixar</a></object></body></html>`);
+  }
+  // PCR901: a ficha diz que há laudo, mas o portal ainda não publicou o PDF
+  pages.set('requisicao_aieidga_resenha_laudo.php?cod_requisicoes=901', '<html><body><p>Laudo não disponível.</p></body></html>');
 }
+
+const laudoUrl = (code: string) => `https://servsa02.sgqsistemas.com.br/laudos/L${code}.pdf`;
 
 // ─── Execução ────────────────────────────────────────────────────────────────
 
@@ -297,6 +319,13 @@ describe('sincronização completa com o portal simulado', () => {
     // PCR901 estava sem laudo na lista e aparece como disponível na ficha
     expect(exams.find(e => e.number === 'PCR901')!.laudo_available).toBe(true);
 
+    // Laudos: o PDF de cada laudo liberado fica guardado na pasta do animal
+    const laudo = exams.find(e => e.number === 'PCR900')!;
+    expect(laudo.laudo_path).toBe(`${VET}/equinos/${trovao.id}/laudo-PCR900.pdf`);
+    expect(db.files.has(laudo.laudo_path)).toBe(true);
+    expect(exams.filter(e => e.laudo_path).map(e => e.number).sort()).toEqual(['PCR900', 'PCR902', 'PCR950']);
+    expect(job.stats.laudos).toMatchObject({ total: 4, done: 4, saved: 3, errors: 0, stopped: false });
+
     // Histórico de saúde
     expect(db.rows('vet_equine_health_records')).toMatchObject([
       { equine_id: trovao.id, kind: 'vacina', event_date: '2026-01-10', title: 'Raiva', data: { Vacina: 'Raiva', Produto: 'Rabmune' } },
@@ -336,6 +365,35 @@ describe('sincronização completa com o portal simulado', () => {
     // Só o animal que ficou de fora (dono sem CPF) é tentado de novo; nenhuma imagem é baixada outra vez
     expect(requested.filter(p => p.startsWith('animal_ficha.php'))).toEqual(['animal_ficha.php?cod_animal=102']);
     expect(requested.filter(p => p.startsWith('uploads/'))).toEqual([]);
+    // Laudos já guardados não são baixados de novo; só o que ainda não tinha PDF é consultado
+    expect(requested.filter(p => p.endsWith('.pdf'))).toEqual([]);
+    expect(requested.filter(p => p.includes('_resenha_laudo.php'))).toEqual(['requisicao_aieidga_resenha_laudo.php?cod_requisicoes=901']);
+  });
+
+  it('um PDF que não baixa não impede os outros laudos', async () => {
+    missingFiles.add(laudoUrl('900'));
+    const job = await runJob(db);
+    expect(job.status).toBe('done');
+    expect(job.stats.laudos).toMatchObject({ done: 4, saved: 2, errors: 1, stopped: false });
+    expect(db.rows('vet_equine_exams').find(e => e.number === 'PCR900')!.laudo_path ?? null).toBeNull();
+
+    // Na sincronização seguinte o que faltou é tentado de novo
+    missingFiles.clear();
+    const again = await runJob(db);
+    expect(again.stats.laudos).toMatchObject({ saved: 1 });
+    expect(db.rows('vet_equine_exams').find(e => e.number === 'PCR900')!.laudo_path).toBeTruthy();
+  });
+
+  it('se o servidor de laudos recusar, encerra só a etapa dos PDFs', async () => {
+    for (const code of ['900', '902', '950']) blockedFiles.add(laudoUrl(code));
+    const job = await runJob(db);
+    expect(job.status).toBe('done');
+    expect(job.error).toBeNull();
+    expect(job.stats.laudos).toMatchObject({ done: 1, saved: 0, stopped: true });
+    expect(job.stats.issues.some(i => i.includes('recusou o download'))).toBe(true);
+    // Não insiste: um único PDF foi pedido, e o resto da importação está completo
+    expect(requested.filter(p => p.endsWith('.pdf'))).toHaveLength(1);
+    expect(db.rows('vet_equines')).toHaveLength(2);
   });
 
   it('com "reler fichas", pega registros novos de animais já importados', async () => {

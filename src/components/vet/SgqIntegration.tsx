@@ -82,10 +82,21 @@ function listStepsDone(job: JobView): number {
   }
 }
 
+/** A etapa de laudos (PDFs) roda dentro da fase de fichas, depois que a fila delas acaba. */
+function inLaudos(job: JobView): boolean {
+  return job.phase === 'details' && job.stats.laudos.queued && job.stats.laudos.total > 0;
+}
+
+/** Passos de página única que faltam: fichas e laudos somados. */
+function workLeft(job: JobView): { done: number; total: number } {
+  const { details, laudos } = job.stats;
+  return { done: details.done + laudos.done, total: details.total + Math.max(laudos.total, laudos.done) };
+}
+
 function percent(job: JobView): number {
   if (job.phase === 'done') return 100;
   const lists = (listStepsDone(job) / LIST_STEPS) * LIST_WEIGHT;
-  const { done, total } = job.stats.details;
+  const { done, total } = workLeft(job);
   const details = job.phase === 'details' && total > 0 ? (done / total) * (100 - LIST_WEIGHT) : 0;
   return Math.min(99, Math.round(lists + details));
 }
@@ -96,14 +107,18 @@ function phaseLabel(job: JobView): string {
     case 'properties': return 'Lendo a lista de propriedades';
     case 'animals':    return 'Lendo a lista de animais';
     case 'exams':      return 'Lendo as requisições de exames';
-    case 'details':    return `Importando fichas — ${job.stats.details.done} de ${job.stats.details.total}`;
+    case 'details':
+      return inLaudos(job)
+        ? `Guardando laudos em PDF — ${job.stats.laudos.done} de ${job.stats.laudos.total}`
+        : `Importando fichas — ${job.stats.details.done} de ${job.stats.details.total}`;
     default:           return 'Concluído';
   }
 }
 
 function remainingLabel(job: JobView): string | null {
   if (job.phase !== 'details') return 'as listas levam menos de um minuto';
-  const left = job.stats.details.total - job.stats.details.done;
+  const { done, total } = workLeft(job);
+  const left = total - done;
   if (left <= 0) return null;
   const minutes = Math.ceil((left * (STEP_DELAY_MS + STEP_JITTER_MS / 2 + 1_200)) / 60_000);
   if (minutes <= 1) return 'menos de 1 minuto restante';
@@ -179,8 +194,8 @@ function Stats({ job }: { job: JobView }) {
 }
 
 function Stepper({ job, active }: { job: JobView; active: boolean }) {
-  const current = job.phase === 'done' ? PHASES.length : PHASES.indexOf(job.phase);
-  const labels = ['Proprietários', 'Propriedades', 'Animais', 'Exames', 'Fichas'];
+  const labels = ['Proprietários', 'Propriedades', 'Animais', 'Exames', 'Fichas', 'Laudos'];
+  const current = job.phase === 'done' ? labels.length : inLaudos(job) ? labels.length - 1 : PHASES.indexOf(job.phase);
   return (
     <ol style={{ listStyle: 'none', display: 'flex', margin: '1.125rem 0 0', padding: 0 }}>
       {labels.map((label, i) => {
@@ -231,7 +246,7 @@ const OUTCOME: Record<SyncEvent['outcome'], { label: string; color: string }> = 
 
 const SCOPE: Record<SyncEvent['scope'], string> = {
   owners: 'Lista', properties: 'Lista', animals: 'Lista', exams: 'Lista',
-  animal: 'Animal', owner: 'Proprietário', property: 'Propriedade', link: 'Vínculo',
+  animal: 'Animal', owner: 'Proprietário', property: 'Propriedade', link: 'Vínculo', laudo: 'Laudo',
 };
 
 type Filter = 'all' | 'changed' | 'problems';
@@ -344,11 +359,12 @@ function Feed({ entries }: { entries: FeedEntry[] }) {
 }
 
 function Issues({ job }: { job: JobView }) {
-  const { issues, details, health, files, links } = job.stats;
+  const { issues, details, health, files, links, laudos } = job.stats;
   const extras = [
     health.records ? `${health.records} registros de saúde` : null,
     files.resenhos ? `${files.resenhos} resenhos` : null,
     files.photos ? `${files.photos} fotos` : null,
+    laudos.saved ? `${laudos.saved} laudos em PDF guardados` : null,
     links.total ? `${links.linked} de ${links.total} animais ligados à propriedade` : null,
   ].filter(Boolean);
   const total = issues.length + (details.errors ? 1 : 0);
@@ -356,7 +372,7 @@ function Issues({ job }: { job: JobView }) {
   return (
     <>
       {extras.length > 0 && (
-        <p style={{ fontSize: '0.8125rem', color: C.muted, marginTop: '0.75rem' }}>Das fichas: {extras.join(' · ')}</p>
+        <p style={{ fontSize: '0.8125rem', color: C.muted, marginTop: '0.75rem' }}>Também importados: {extras.join(' · ')}</p>
       )}
       {total > 0 && (
         <details style={{ marginTop: '0.75rem', border: '1px solid hsl(35 92% 40% / 0.3)', background: 'hsl(35 92% 50% / 0.06)', borderRadius: '0.75rem', padding: '0.625rem 0.875rem' }}>
@@ -689,7 +705,9 @@ export default function SgqIntegration() {
                     <p style={{ fontSize: '0.8125rem', color: C.muted, marginTop: 2, lineHeight: 1.5 }}>
                       {resumable && job
                         ? job.phase === 'details'
-                          ? `Parou em ${job.stats.details.done} de ${job.stats.details.total} fichas. Ao sincronizar, continua das que faltam.`
+                          ? inLaudos(job)
+                            ? `Parou em ${job.stats.laudos.done} de ${job.stats.laudos.total} laudos em PDF. Ao sincronizar, continua dos que faltam.`
+                            : `Parou em ${job.stats.details.done} de ${job.stats.details.total} fichas. Ao sincronizar, continua das que faltam.`
                           : 'O que já foi importado não é duplicado ao sincronizar de novo.'
                         : status.lastSyncAt
                           ? `Última sincronização completa em ${formatDateTime(status.lastSyncAt)}.`

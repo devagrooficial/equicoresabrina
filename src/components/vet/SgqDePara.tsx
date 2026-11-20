@@ -79,7 +79,7 @@ const GROUPS: Group[] = [
       ['Data da requisição', 'Requisição (data)'],
       ['Colheita',           'Colheita',    'A validade mostrada é estimada: 60 dias após a colheita'],
       ['Laboratório',        'Laboratório'],
-      ['Laudo',              'Laudo (PDF)', 'O PDF é buscado no portal quando você abre e fica guardado'],
+      ['Laudo',              'Laudo (PDF)', 'O PDF é baixado na sincronização e fica guardado no EquiCore'],
     ],
   },
   {

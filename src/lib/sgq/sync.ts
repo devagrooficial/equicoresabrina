@@ -6,7 +6,8 @@
 // a sincronização pode ser interrompida e retomada.
 //
 // Fases: owners → properties → animals → exams (listas) → details (fichas,
-// endereços, propriedades e, no fim, o vínculo animal–propriedade).
+// endereços, propriedades, o vínculo animal–propriedade e, por último, o PDF
+// de cada laudo, que fica guardado no EquiCore).
 //
 // Regras de gravação:
 //  - dados do EquiCore nunca são sobrescritos: a importação só cria registros
@@ -17,10 +18,10 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 import { decryptSecret, encryptSecret } from './crypto';
-import { sgqGet, sgqGetUpload, sgqLogin, sleep, SgqAuthError, SgqBlockedError } from './client';
+import { sgqGet, sgqGetLaudo, sgqGetUpload, sgqLogin, sleep, SgqAuthError, SgqBlockedError } from './client';
 import {
   EXAM_LABEL, EXAM_TYPES, HEALTH_LABEL, normalizeKey, parseAnimalFicha, parseAnimalList,
-  parseExamList, parseOwnerDetail, parseOwnerList, parsePropertyDetail, parsePropertyList,
+  parseExamList, parseLaudoUrl, parseOwnerDetail, parseOwnerList, parsePropertyDetail, parsePropertyList,
   parseRequisitionProperty,
   type ExamType, type HealthKind, type SgqAnimalFicha,
 } from './parse';
@@ -40,6 +41,8 @@ const TICK_BUDGET_MS = 45_000;
 class TickTimeout extends Error {}
 const MAX_ISSUES = 40;
 const MAX_CONSECUTIVE_ERRORS = 5;
+/** Laudos seguidos sem PDF até a etapa desistir (o resto da importação já está salvo). */
+const MAX_LAUDO_FAILURES = 5;
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export interface SyncContext {
@@ -63,6 +66,11 @@ export interface SyncStats {
   /** Vínculo animal–propriedade, lido da última requisição de cada animal */
   links:      { queued: boolean; total: number; linked: number };
   details:    { total: number; done: number; errors: number };
+  /**
+   * PDFs dos laudos, baixados depois das fichas. `total` é uma estimativa até a
+   * etapa começar (`queued`); `cursor` é o último exame tentado neste job.
+   */
+  laudos:     { queued: boolean; total: number; done: number; saved: number; errors: number; streak: number; stopped: boolean; cursor: string | null };
   issues:     string[];
   consecutiveErrors: number;
   /** true = reler também as fichas de animais já importados (pega exames e histórico novos) */
@@ -89,7 +97,7 @@ export interface SyncChange {
 
 /** O que um passo fez — exibido na tela como atividade; não é persistido. */
 export interface SyncEvent {
-  scope: 'owners' | 'properties' | 'animals' | 'exams' | 'animal' | 'owner' | 'property' | 'link';
+  scope: 'owners' | 'properties' | 'animals' | 'exams' | 'animal' | 'owner' | 'property' | 'link' | 'laudo';
   title: string;
   outcome: 'created' | 'updated' | 'unchanged' | 'skipped' | 'error';
   note?: string;
@@ -124,6 +132,7 @@ export function emptyStats(full = false): SyncStats {
     files:      { resenhos: 0, photos: 0 },
     links:      { queued: false, total: 0, linked: 0 },
     details:    { total: 0, done: 0, errors: 0 },
+    laudos:     { queued: false, total: 0, done: 0, saved: 0, errors: 0, streak: 0, stopped: false, cursor: null },
     issues:     [],
     consecutiveErrors: 0,
   };
@@ -140,6 +149,7 @@ function withDefaults(stats: Partial<SyncStats> | null): SyncStats {
     files:      { ...base.files,      ...stats?.files },
     links:      { ...base.links,      ...stats?.links },
     details:    { ...base.details,    ...stats?.details },
+    laudos:     { ...base.laudos,     ...stats?.laudos },
     issues:     stats?.issues ?? [],
     consecutiveErrors: stats?.consecutiveErrors ?? 0,
     full:       stats?.full ?? false,
@@ -1054,6 +1064,141 @@ async function syncNextDetail(ctx: SyncContext, jobId: string, stats: SyncStats)
   return event;
 }
 
+// ─── Laudos em PDF (um por passo, depois das fichas) ─────────────────────────
+
+export interface LaudoExam {
+  id: string;
+  exam_type: string;
+  number: string;
+  sgq_code: string | null;
+  equine_id: string | null;
+}
+
+export type LaudoOutcome =
+  | { path: string }
+  | { path: null; reason: 'unavailable' | 'download' | 'blocked' };
+
+/**
+ * Busca o PDF de um laudo no portal e guarda no bucket docs, na pasta do
+ * animal. `ctx.db` precisa poder gravar na pasta do veterinário (a sessão dele
+ * ou service_role). Depois disso o laudo é servido só pelo EquiCore.
+ */
+export async function importLaudo(ctx: SyncContext, exam: LaudoExam): Promise<LaudoOutcome> {
+  if (!(EXAM_TYPES as readonly string[]).includes(exam.exam_type) || !/^\d+$/.test(exam.sgq_code ?? '')) {
+    return { path: null, reason: 'unavailable' };
+  }
+  const page = await fetchPage(ctx, `requisicao_${exam.exam_type}_resenha_laudo.php?cod_requisicoes=${exam.sgq_code}`);
+  const url = parseLaudoUrl(page);
+  if (!url) return { path: null, reason: 'unavailable' };
+
+  mark(ctx, 'baixando o PDF do laudo');
+  await sleep(600);
+  let file;
+  try {
+    file = await sgqGetLaudo(url);
+  } catch (err) {
+    // O servidor de arquivos recusou: não insiste, mas o que já foi importado continua valendo
+    if (err instanceof SgqBlockedError) return { path: null, reason: 'blocked' };
+    throw err;
+  }
+  if (!file) return { path: null, reason: 'download' };
+
+  mark(ctx, 'guardando o PDF do laudo no EquiCore');
+  const folder = exam.equine_id ? `equinos/${exam.equine_id}` : 'exames';
+  const name = String(exam.number).replace(/[^A-Za-z0-9_-]/g, '') || exam.id;
+  const path = `${ctx.vetId}/${folder}/laudo-${name}.pdf`;
+  const { error } = await ctx.db.storage.from('docs')
+    .upload(path, file.bytes, { contentType: 'application/pdf', upsert: true });
+  if (error) throw error;
+
+  await must(ctx.db.from('vet_equine_exams').update({ laudo_path: path, laudo_available: true }).eq('id', exam.id));
+  return { path };
+}
+
+/** Exames com laudo liberado no portal cujo PDF ainda não está no EquiCore. */
+function pendingLaudos(ctx: SyncContext, columns: string, options?: { count: 'exact'; head: true }) {
+  return ctx.db.from('vet_equine_exams').select(columns, options)
+    .eq('vet_id', ctx.vetId).eq('laudo_available', true)
+    .is('laudo_path', null).not('sgq_code', 'is', null);
+}
+
+async function countPendingLaudos(ctx: SyncContext, linkedOnly: boolean): Promise<number> {
+  const query = pendingLaudos(ctx, 'id', { count: 'exact', head: true });
+  const { count, error } = await (linkedOnly ? query.not('equine_id', 'is', null) : query);
+  if (error) throw error;
+  return count ?? 0;
+}
+
+/**
+ * Baixa o próximo laudo. Só entram exames já ligados a um animal — são os que
+ * aparecem nas telas do veterinário e do proprietário. Devolve null quando não
+ * há mais nada a baixar.
+ */
+async function syncNextLaudo(ctx: SyncContext, stats: SyncStats): Promise<SyncEvent | null> {
+  const laudos = stats.laudos;
+  if (laudos.stopped) return null;
+
+  if (!laudos.queued) {
+    mark(ctx, 'contando os laudos liberados no portal');
+    laudos.queued = true;
+    laudos.total = await countPendingLaudos(ctx, true);
+    if (!laudos.total) return null;
+    return {
+      scope: 'laudo',
+      title: 'Laudos em PDF',
+      outcome: 'unchanged',
+      note: `${laudos.total} laudos liberados no portal: guardando o PDF de cada um no EquiCore`,
+      changes: [],
+    };
+  }
+
+  mark(ctx, 'procurando o próximo laudo a baixar');
+  let query = pendingLaudos(ctx, 'id, exam_type, number, sgq_code, equine_id, animal_name').not('equine_id', 'is', null);
+  if (laudos.cursor) query = query.gt('id', laudos.cursor);
+  const exam = await must<any>(query.order('id').limit(1).maybeSingle());
+  if (!exam) return null;
+  laudos.cursor = exam.id;
+
+  const title = [exam.number, exam.animal_name].filter(Boolean).join(' · ');
+  let event: SyncEvent;
+  let stop: string | null = null;
+  try {
+    const result = await importLaudo(ctx, exam);
+    if (result.path !== null) {
+      laudos.saved++;
+      laudos.streak = 0;
+      event = {
+        scope: 'laudo', title, outcome: 'created',
+        changes: [{ field: 'Laudo', from: 'PDF no portal SGQ', to: 'PDF guardado no EquiCore', written: true }],
+      };
+    } else if (result.reason === 'unavailable') {
+      laudos.streak++;
+      event = { scope: 'laudo', title, outcome: 'skipped', note: 'o portal ainda não liberou o PDF deste laudo', changes: [] };
+    } else {
+      laudos.errors++;
+      laudos.streak++;
+      if (result.reason === 'blocked') stop = 'O servidor de laudos da SGQ recusou o download dos PDFs.';
+      event = { scope: 'laudo', title, outcome: 'error', note: 'não foi possível baixar o PDF', changes: [] };
+    }
+  } catch (err) {
+    // Login recusado ou portal bloqueando: interrompe o job inteiro
+    if (err instanceof SgqAuthError || err instanceof SgqBlockedError) throw err;
+    console.error('[sgq/sync] laudo', exam.exam_type, exam.sgq_code, err);
+    laudos.errors++;
+    laudos.streak++;
+    event = { scope: 'laudo', title, outcome: 'error', note: err instanceof Error ? err.message.slice(0, 200) : 'erro', changes: [] };
+  }
+  laudos.done++;
+
+  if (!stop && laudos.streak >= MAX_LAUDO_FAILURES) stop = 'O download dos laudos em PDF falhou várias vezes seguidas.';
+  if (stop) {
+    // Os cadastros, exames e fichas já estão salvos: encerra só esta etapa
+    laudos.stopped = true;
+    addIssue(stats, `${stop} Os laudos que faltam serão tentados de novo na próxima sincronização e continuam podendo ser abertos um a um.`);
+  }
+  return event;
+}
+
 // ─── Orquestração ────────────────────────────────────────────────────────────
 
 /**
@@ -1168,9 +1313,13 @@ async function runPhase(ctx: SyncContext, job: any, stats: SyncStats): Promise<{
     phase = 'exams';
   } else if (phase === 'exams') {
     event = await syncExams(ctx, stats);
-    if (stats.exams.cursor >= EXAM_TYPES.length) phase = 'details';
+    if (stats.exams.cursor >= EXAM_TYPES.length) {
+      phase = 'details';
+      // Estimativa para a barra de progresso; a contagem exata sai quando a etapa começa
+      stats.laudos.total = await countPendingLaudos(ctx, false);
+    }
   } else if (phase === 'details') {
-    event = await syncNextDetail(ctx, job.id, stats);
+    event = await syncNextDetail(ctx, job.id, stats) ?? await syncNextLaudo(ctx, stats);
     if (!event) phase = 'done';
   }
 

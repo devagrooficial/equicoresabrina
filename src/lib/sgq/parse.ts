@@ -187,6 +187,11 @@ export function isLoggedInHtml(html: string): boolean {
   return html.includes('logout.php');
 }
 
+/** Tela de login do portal (é o que ele devolve quando a sessão caiu). */
+export function isLoginHtml(html: string): boolean {
+  return html.includes('validacao.php');
+}
+
 // ─── Listas ──────────────────────────────────────────────────────────────────
 
 function listRows(html: string): HTMLElement[] | null {
