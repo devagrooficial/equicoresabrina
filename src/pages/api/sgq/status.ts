@@ -27,9 +27,13 @@ export const GET: APIRoute = async ({ request }) => {
       .order('started_at', { ascending: false }).limit(1).maybeSingle(),
   ]);
 
-  if (integration.error || job.error) {
-    console.error('[sgq/status]', integration.error?.message ?? job.error?.message);
-    return json({ error: 'Integração indisponível. A migration sgq_integration.sql já foi aplicada?' }, 500, session.headers);
+  const failure = integration.error ?? job.error;
+  if (failure) {
+    console.error('[sgq/status]', failure.code, failure.message);
+    // O detalhe é o erro do banco/API (ex.: chave de serviço inválida, tabela ausente);
+    // não contém segredo e poupa uma ida aos logs para descobrir a causa.
+    const detail = [failure.code, failure.message].filter(Boolean).join(': ').slice(0, 160);
+    return json({ error: 'Integração indisponível no servidor.', detail }, 500, session.headers);
   }
 
   return json({

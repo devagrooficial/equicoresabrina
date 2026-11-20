@@ -39,7 +39,10 @@ async function api<T>(path: string, method: 'GET' | 'POST' | 'DELETE', body?: un
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error ?? 'Falha na comunicação com o servidor.');
+  if (!res.ok) {
+    const message = data.error ?? 'Falha na comunicação com o servidor.';
+    throw new Error(data.detail ? `${message} Detalhe: ${data.detail}` : message);
+  }
   return data as T;
 }
 
