@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { z } from 'zod';
 import { createClient } from '../../lib/supabase';
 
@@ -37,9 +37,10 @@ export default function ForgotPasswordForm() {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [focused, setFocused] = useState(false);
   const [sent, setSent] = useState(false);
-  const [isDark] = useState(() =>
-    typeof document !== 'undefined' && document.documentElement.classList.contains('dark')
-  );
+  const [isDark, setIsDark] = useState(false);
+  // Lido após a hidratação: no SSR não há tema, e ler no useState faz o React
+  // manter a logo errada (mismatch de hidratação não é corrigido).
+  useEffect(() => { setIsDark(document.documentElement.classList.contains('dark')); }, []);
 
   const supabase = createClient();
 

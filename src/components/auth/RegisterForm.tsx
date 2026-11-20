@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { z } from 'zod';
 import { createClient } from '../../lib/supabase';
 
@@ -163,9 +163,10 @@ export default function RegisterForm() {
   const [error, setError]           = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [focused, setFocused]       = useState<string | null>(null);
-  const [isDark] = useState(() =>
-    typeof document !== 'undefined' && document.documentElement.classList.contains('dark')
-  );
+  const [isDark, setIsDark] = useState(false);
+  // Lido após a hidratação: no SSR não há tema, e ler no useState faz o React
+  // manter a logo errada (mismatch de hidratação não é corrigido).
+  useEffect(() => { setIsDark(document.documentElement.classList.contains('dark')); }, []);
 
   // Vínculo com veterinário (etapa pós-cadastro, só para role === 'dono')
   const [newUserId, setNewUserId]     = useState<string | null>(null);
@@ -660,7 +661,7 @@ export default function RegisterForm() {
               <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: '1.25rem', cursor: 'pointer' }}>
                 <input type="checkbox" checked={terms} onChange={e => setTerms(e.target.checked)} style={{ accentColor: C.green, marginTop: 2, flexShrink: 0 }} />
                 <span style={{ fontSize: '0.8125rem', color: C.muted }}>
-                  Li e aceito os <a href="#" style={{ color: C.green }}>Termos de Uso</a> e a <a href="#" style={{ color: C.green }}>Política de Privacidade</a>
+                  Li e aceito os <a href="/termos" target="_blank" rel="noopener" style={{ color: C.green }}>Termos de Uso</a> e a <a href="/privacidade" target="_blank" rel="noopener" style={{ color: C.green }}>Política de Privacidade</a>
                 </span>
               </label>
 

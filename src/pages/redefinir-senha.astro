@@ -1,0 +1,9 @@
+---
+export const prerender = false;
+import AuthLayout from '../layouts/AuthLayout.astro';
+import ResetPasswordForm from '../components/auth/ResetPasswordForm';
+---
+
+<AuthLayout title="Redefinir senha — EquiCore">
+  <ResetPasswordForm client:load />
+</AuthLayout>

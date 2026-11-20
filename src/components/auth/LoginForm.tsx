@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { z } from 'zod';
 import { createClient } from '../../lib/supabase';
 
@@ -63,9 +63,10 @@ export default function LoginForm() {
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [focusedField, setFocusedField] = useState<string | null>(null);
-  const [isDark] = useState(() =>
-    typeof document !== 'undefined' && document.documentElement.classList.contains('dark')
-  );
+  const [isDark, setIsDark] = useState(false);
+  // Lido após a hidratação: no SSR não há tema, e ler no useState faz o React
+  // manter a logo errada (mismatch de hidratação não é corrigido).
+  useEffect(() => { setIsDark(document.documentElement.classList.contains('dark')); }, []);
 
   const supabase = createClient();
 
@@ -254,9 +255,9 @@ export default function LoginForm() {
 
       <p style={{ textAlign: 'center', fontSize: '0.75rem', color: C.muted, marginTop: '1.5rem' }}>
         Ao entrar, você concorda com os{' '}
-        <a href="#" style={{ color: C.green, textDecoration: 'none' }}>Termos de Uso</a>
+        <a href="/termos" target="_blank" rel="noopener" style={{ color: C.green, textDecoration: 'none' }}>Termos de Uso</a>
         {' '}e a{' '}
-        <a href="#" style={{ color: C.green, textDecoration: 'none' }}>Política de Privacidade</a>.
+        <a href="/privacidade" target="_blank" rel="noopener" style={{ color: C.green, textDecoration: 'none' }}>Política de Privacidade</a>.
       </p>
     </div>
   );
