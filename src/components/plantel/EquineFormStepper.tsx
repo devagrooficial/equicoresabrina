@@ -13,7 +13,7 @@ const equineSchema = z.object({
   breed: z.string().min(1, 'Raça é obrigatória'),
   sex: z.string().min(1, 'Sexo é obrigatório'),
   coat: z.string().min(1, 'Pelagem é obrigatória'),
-  purpose: z.array(z.string()).optional(),
+  purpose: z.array(z.string()).min(1, 'Selecione pelo menos uma finalidade'),
 });
 
 function nullify(val: string | undefined): string | null {
@@ -107,6 +107,8 @@ const PURPOSE_OPTIONS = [
   { value: 'EXPOSICAO', label: 'Exposição' },
   { value: 'CRIACAO', label: 'Criação' },
 ];
+
+const PLAN_NAMES: Record<string, string> = { free: 'Gratuito', starter: 'Starter', pro: 'Pro', haras: 'Haras' };
 
 const STEPS = [
   { id: 1, label: 'Identificação', short: 'ID' },
@@ -257,7 +259,7 @@ function Step1({ f, set }: { f: FormData; set: (k: keyof FormData, v: any) => vo
           <input type="text" value={f.stable} onChange={e => set('stable', e.target.value)} placeholder="Ex.: Baia 04" style={inputStyle} />
         </Field>
         <div style={{ gridColumn: '1 / -1' }}>
-          <label style={labelStyle}>Finalidade / Uso</label>
+          <label style={labelStyle}>Finalidade / Uso *</label>
           <CheckboxGroup options={PURPOSE_OPTIONS} selected={f.purpose} onChange={v => set('purpose', v)} />
         </div>
       </div>
@@ -556,6 +558,7 @@ export default function EquineFormStepper({ initialData, equineId }: { initialDa
   const [form, setForm] = useState<FormData>(initialData ? rowToForm(initialData) : emptyForm);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [planLimit, setPlanLimit] = useState<{ plan: string; limit: number } | null>(null);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
 
   const [photos, setPhotos] = useState<PhotosState>(emptyPhotosState());
@@ -611,7 +614,7 @@ export default function EquineFormStepper({ initialData, equineId }: { initialDa
     });
 
     if (!validation.success) {
-      setValidationErrors(validation.error.errors.map((e) => e.message));
+      setValidationErrors(validation.error.issues.map((issue) => issue.message));
       return;
     }
 
@@ -646,7 +649,7 @@ export default function EquineFormStepper({ initialData, equineId }: { initialDa
         .select('id', { count: 'exact', head: true });
 
       if ((count ?? 0) >= limit) {
-        setSaveError(`Seu plano ${plan.charAt(0).toUpperCase() + plan.slice(1)} permite até ${limit} equinos. Faça upgrade para adicionar mais.`);
+        setPlanLimit({ plan, limit });
         setSaving(false);
         return;
       }
@@ -741,6 +744,11 @@ export default function EquineFormStepper({ initialData, equineId }: { initialDa
     setSaving(false);
 
     if (error) {
+      const match = error.message.match(/PLAN_LIMIT_REACHED: plano (\w+) permite até (\d+)/);
+      if (match) {
+        setPlanLimit({ plan: match[1], limit: Number(match[2]) });
+        return;
+      }
       setSaveError('Erro ao salvar. Tente novamente.');
       return;
     }
@@ -874,6 +882,33 @@ export default function EquineFormStepper({ initialData, equineId }: { initialDa
           </div>
         )}
       </div>
+
+      {planLimit && (
+        <div onClick={() => setPlanLimit(null)}
+          style={{ position: 'fixed', inset: 0, background: 'hsl(0 0% 0% / 0.45)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
+          <div role="dialog" aria-modal="true" onClick={e => e.stopPropagation()}
+            style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '1.25rem', padding: '1.75rem', width: '100%', maxWidth: 420, textAlign: 'center' }}>
+            <div style={{ width: 52, height: 52, borderRadius: '50%', background: C.greenLight, color: C.green, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1rem' }}>
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2l3 7h7l-5.5 4.5L18.5 21 12 16.5 5.5 21l2-7.5L2 9h7z"/></svg>
+            </div>
+            <h2 style={{ fontSize: '1.2rem', fontWeight: 800, color: C.fg, marginBottom: '0.5rem' }}>Limite do seu plano atingido</h2>
+            <p style={{ fontSize: '0.875rem', color: C.muted, lineHeight: 1.6 }}>
+              Seu plano {PLAN_NAMES[planLimit.plan] ?? planLimit.plan} permite até {planLimit.limit} equinos.
+              Assine o EquiCore Haras para cadastrar equinos sem limite.
+            </p>
+            <div style={{ display: 'flex', gap: 10, marginTop: '1.5rem' }}>
+              <button type="button" onClick={() => setPlanLimit(null)}
+                style={{ flex: 1, padding: '0.6875rem', borderRadius: '0.625rem', background: 'hsl(var(--muted))', color: C.fg, fontWeight: 600, fontSize: '0.875rem', border: 'none', cursor: 'pointer' }}>
+                Agora não
+              </button>
+              <a href="/dashboard/assinatura"
+                style={{ flex: 1, padding: '0.6875rem', borderRadius: '0.625rem', background: C.green, color: '#fff', fontWeight: 700, fontSize: '0.875rem', textDecoration: 'none' }}>
+                Ver assinatura
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
 
       <Lightbox src={lightbox.src} onClose={lightbox.close} />
     </div>
