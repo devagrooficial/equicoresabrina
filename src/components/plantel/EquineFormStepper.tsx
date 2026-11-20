@@ -567,6 +567,25 @@ export default function EquineFormStepper({ initialData, equineId }: { initialDa
 
   const supabase = createClient();
 
+  /** Abre o modal de upgrade e retorna true se o plano já atingiu o limite. */
+  async function reachedPlanLimit(userId: string): Promise<boolean> {
+    const { data: profile } = await supabase.from('profiles').select('plan').eq('id', userId).single();
+    const plan = profile?.plan ?? 'free';
+    const limit = PLAN_LIMITS[plan] ?? 2;
+    const { count } = await supabase.from('equinos').select('id', { count: 'exact', head: true });
+    if ((count ?? 0) >= limit) {
+      setPlanLimit({ plan, limit });
+      return true;
+    }
+    return false;
+  }
+
+  // Criação: avisa do limite logo ao abrir, antes de o usuário preencher tudo
+  useEffect(() => {
+    if (isEdit) return;
+    supabase.auth.getUser().then(({ data: { user } }) => { if (user) reachedPlanLimit(user.id); });
+  }, [isEdit]);
+
   // Edição: carrega fotos já existentes no storage
   useEffect(() => {
     if (!isEdit || !equineId) return;
@@ -618,13 +637,6 @@ export default function EquineFormStepper({ initialData, equineId }: { initialDa
       return;
     }
 
-    const missing = missingPhotos(photos);
-    if (missing.length > 0) {
-      setPhotoErrorKeys(PHOTO_SLOTS.filter(s => !photos[s.key].file && !photos[s.key].existingUrl).map(s => s.key));
-      setSaveError(`Envie as 4 fotos obrigatórias do animal: ${missing.join(', ')}.`);
-      return;
-    }
-
     setSaving(true);
 
     const { data: { session } } = await supabase.auth.getSession();
@@ -633,26 +645,18 @@ export default function EquineFormStepper({ initialData, equineId }: { initialDa
       return;
     }
 
-    // Verificar limite do plano (apenas ao criar)
-    if (!isEdit) {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('plan')
-        .eq('id', session.user.id)
-        .single();
+    // Limite do plano antes das fotos: não faz sentido exigir upload de quem não pode cadastrar
+    if (!isEdit && await reachedPlanLimit(session.user.id)) {
+      setSaving(false);
+      return;
+    }
 
-      const plan = profile?.plan ?? 'free';
-      const limit = PLAN_LIMITS[plan] ?? 2;
-
-      const { count } = await supabase
-        .from('equinos')
-        .select('id', { count: 'exact', head: true });
-
-      if ((count ?? 0) >= limit) {
-        setPlanLimit({ plan, limit });
-        setSaving(false);
-        return;
-      }
+    const missing = missingPhotos(photos);
+    if (missing.length > 0) {
+      setPhotoErrorKeys(PHOTO_SLOTS.filter(s => !photos[s.key].file && !photos[s.key].existingUrl).map(s => s.key));
+      setSaveError(`Envie as 4 fotos obrigatórias do animal: ${missing.join(', ')}.`);
+      setSaving(false);
+      return;
     }
 
     // Gera o id antes do insert para poder nomear os arquivos de foto
