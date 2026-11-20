@@ -35,6 +35,12 @@ const C = {
 const STEP_DELAY_MS = 2_800;
 const STEP_JITTER_MS = 1_500;
 const MAX_NETWORK_RETRIES = 3;
+/**
+ * Sem nenhum passo concluído por este tempo, a tela para e avisa. Cobre o caso
+ * em que o servidor é derrubado no meio de um passo: a trava daquele passo
+ * leva ~70 s para expirar e, até lá, as chamadas só respondem "aguarde".
+ */
+const STALL_LIMIT_MS = 150_000;
 /** Quantos passos ficam visíveis na lista de atividade */
 const MAX_FEED = 80;
 /** As listas (6 páginas) são rápidas; quase todo o tempo vai nas fichas */
@@ -51,7 +57,8 @@ async function api<T>(path: string, method: 'GET' | 'POST' | 'DELETE', body?: un
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const message = data.error ?? 'Falha na comunicação com o servidor.';
+    // Sem corpo JSON, a resposta não veio da aplicação (ex.: 504 = função excedeu o tempo)
+    const message = data.error ?? `O servidor não respondeu (HTTP ${res.status}).`;
     throw new Error(data.detail ? `${message} Detalhe: ${data.detail}` : message);
   }
   return data as T;
@@ -409,6 +416,7 @@ export default function SgqIntegration() {
   const [syncing, setSyncing]     = useState(false);
   const [feed, setFeed]           = useState<FeedEntry[]>([]);
   const [full, setFull]           = useState(false);
+  const [retrying, setRetrying]   = useState<string | null>(null);
   const loopActive = useRef(false);
   const feedId = useRef(0);
 
@@ -437,7 +445,10 @@ export default function SgqIntegration() {
     loopActive.current = true;
     setSyncing(true);
     setError(null);
+    setRetrying(null);
     let failures = 0;
+    let lastError: string | null = null;
+    let lastProgress = Date.now();
 
     try {
       const started = await api<{ job: JobView }>('/api/sgq/sync', 'POST', { action: 'start', full });
@@ -447,10 +458,11 @@ export default function SgqIntegration() {
         let res: { job: JobView | null; wait?: boolean; event?: SyncEvent | null };
         try {
           res = await api('/api/sgq/sync', 'POST', { action: 'tick' });
-          failures = 0;
         } catch (err) {
-          // Queda de rede momentânea: tenta mais algumas vezes antes de pausar
+          // Falha momentânea: tenta mais algumas vezes antes de parar
+          lastError = err instanceof Error ? err.message : 'Falha na comunicação com o servidor.';
           if (++failures > MAX_NETWORK_RETRIES) throw err;
+          setRetrying(`${lastError} Tentando de novo (${failures} de ${MAX_NETWORK_RETRIES})…`);
           await sleep(5_000 * failures);
           continue;
         }
@@ -458,6 +470,22 @@ export default function SgqIntegration() {
         if (!res.job) break;
         setJob(res.job);
         pushEvent(res.event);
+
+        if (res.wait) {
+          // "Aguarde" não é progresso: se só vier isso, um passo anterior ficou preso
+          if (Date.now() - lastProgress > STALL_LIMIT_MS) {
+            throw new Error(
+              `A sincronização não avança há mais de ${Math.round(STALL_LIMIT_MS / 60_000)} minutos.` +
+              (lastError ? ` Último erro: ${lastError}` : ' O servidor não concluiu o passo em andamento.') +
+              ' O progresso está salvo; tente continuar em alguns minutos.',
+            );
+          }
+        } else {
+          failures = 0;
+          lastError = null;
+          lastProgress = Date.now();
+          setRetrying(null);
+        }
         if (res.job.status !== 'running') {
           if (res.job.status === 'done') {
             setStatus(prev => (prev ? { ...prev, lastSyncAt: res.job!.finishedAt } : prev));
@@ -472,6 +500,7 @@ export default function SgqIntegration() {
     } finally {
       loopActive.current = false;
       setSyncing(false);
+      setRetrying(null);
     }
   }
 
@@ -636,6 +665,9 @@ export default function SgqIntegration() {
                     ? 'O progresso está salvo. Continue quando quiser, nesta ou em outra sessão.'
                     : <>Uma página do portal por vez{remainingLabel(job) ? ` — ${remainingLabel(job)}` : ''}. Deixe esta aba aberta.</>}
                 </p>
+                {retrying && (
+                  <p role="status" style={{ fontSize: '0.8125rem', color: C.amber, marginTop: 8, lineHeight: 1.5 }}>{retrying}</p>
+                )}
                 <Stepper job={job} active={syncing} />
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: '1.125rem' }}>
                   {paused

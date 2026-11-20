@@ -1,10 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Sincronização de ponta a ponta com o portal simulado (páginas fictícias com a
 // mesma estrutura do portal) e um banco em memória no lugar do Supabase.
 
 const pages = new Map<string, string>();
 const requested: string[] = [];
+/** Páginas que o portal simulado nunca responde */
+const hanging = new Set<string>();
 
 vi.mock('./client', () => {
   class SgqAuthError extends Error {}
@@ -16,6 +18,7 @@ vi.mock('./client', () => {
     sgqLogin: async () => 'PHPSESSID=teste',
     sgqGet: async (_cookie: string, page: string) => {
       requested.push(page);
+      if (hanging.has(page)) return new Promise(() => {});
       const html = pages.get(page);
       if (html === undefined) throw new Error(`página não simulada: ${page}`);
       return { html, loggedIn: true };
@@ -146,6 +149,7 @@ const editLink = (code: string) => `<td><a href="#" onclick="editar('${code}')">
 
 function setupPortal() {
   pages.clear();
+  hanging.clear();
   requested.length = 0;
 
   pages.set('proprietario_lista.php', page(`<table id="example"><thead><tr><th></th><th>Proprietário</th><th>CPF/CNPJ</th><th>Cidade - UF</th><th>Telefone</th><th>E-mail</th></tr></thead><tbody>
@@ -362,3 +366,30 @@ describe('sincronização completa com o portal simulado', () => {
 });
 
 const normalize = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
+describe('passo que não termina', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('é interrompido antes do limite da função e diz onde estava', async () => {
+    setupPortal();
+    const db = new FakeDb();
+    db.rows('vet_integrations').push({ vet_id: VET, provider: 'sgq', username: 'u', secret_enc: 'enc:s', session_enc: 'enc:c=1' });
+    db.rows('sgq_sync_jobs').push({
+      id: 'job-1', vet_id: VET, status: 'running', phase: 'exams', stats: emptyStats(),
+      started_at: new Date().toISOString(), finished_at: null, error: null,
+    });
+    hanging.add('requisicao_aieidga_lista.php');
+
+    vi.useFakeTimers();
+    const pending = runTick({ admin: db, db, vetId: VET }, { ...db.rows('sgq_sync_jobs')[0] });
+    await vi.advanceTimersByTimeAsync(46_000);
+    const { job } = await pending;
+
+    expect(job.status).toBe('error');
+    expect(job.error).toContain('mais de 45 s');
+    expect(job.error).toContain('aguardando o portal SGQ responder requisicao_aieidga_lista.php');
+    // Nada foi gravado pela metade
+    expect(db.rows('vet_equine_exams')).toHaveLength(0);
+  });
+});
+

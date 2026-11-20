@@ -8,6 +8,19 @@ import { EXAM_TYPES, type ExamType, type HealthKind } from './labels';
 
 export { EXAM_LABEL, EXAM_TYPES, HEALTH_KINDS, HEALTH_LABEL, type ExamType, type HealthKind } from './labels';
 
+// ─── HTML do portal ──────────────────────────────────────────────────────────
+
+// Tags só de formatação. O portal as deixa abertas sem fechar (ex.: um <b> por
+// linha nas listas de requisição). O navegador conserta sozinho; este parser
+// não: ele aninha cada linha dentro da anterior, o que faz o tempo de leitura
+// crescer de forma explosiva (704 linhas levavam minutos). Como não carregam
+// dado nenhum, são removidas antes de montar a árvore.
+const FORMATTING_TAGS = /<\/?(?:b|font|strong|em|u|center|small|big)(?:\s[^>]*)?>/gi;
+
+function parseDoc(html: string): HTMLElement {
+  return parse(html.replace(FORMATTING_TAGS, ''));
+}
+
 // ─── Texto ───────────────────────────────────────────────────────────────────
 
 export function clean(value: string | null | undefined): string {
@@ -177,7 +190,7 @@ export function isLoggedInHtml(html: string): boolean {
 // ─── Listas ──────────────────────────────────────────────────────────────────
 
 function listRows(html: string): HTMLElement[] | null {
-  const table = parse(html).querySelector('table#example');
+  const table = parseDoc(html).querySelector('table#example');
   if (!table) return null;
   return table.querySelectorAll('tbody tr');
 }
@@ -419,7 +432,7 @@ function uploadSrc(el: HTMLElement | null): string | null {
 
 /** animal_ficha.php?cod_animal=N — null quando o formulário de cadastro não está na página. */
 export function parseAnimalFicha(html: string, today: Date = new Date()): SgqAnimalFicha | null {
-  const root = parse(html);
+  const root = parseDoc(html);
   if (!root.querySelector('[name="nome_animal"]')) return null;
 
   const raw = {
@@ -466,7 +479,7 @@ export interface SgqOwnerDetail {
 
 /** proprietario_editar.php?cod_pro=N */
 export function parseOwnerDetail(html: string): SgqOwnerDetail | null {
-  const root = parse(html);
+  const root = parseDoc(html);
   if (!root.querySelector('[name="cpf"]')) return null;
   const cep = onlyDigits(inputValue(root, 'cep'));
   return {
@@ -487,7 +500,7 @@ export interface SgqPropertyDetail {
 
 /** propriedade_editar.php?cod_propriedade=N */
 export function parsePropertyDetail(html: string): SgqPropertyDetail | null {
-  const root = parse(html);
+  const root = parseDoc(html);
   if (!root.querySelector('[name="nome_propriedade"]')) return null;
   const count = inputValue(root, 'animais_propriedade');
   return {
@@ -511,7 +524,7 @@ export interface SgqExamRow {
 
 /** requisicao_{aieidga,aieelisa,mormoelisa}_lista.php */
 export function parseExamList(html: string): SgqExamRow[] | null {
-  const table = parse(html).querySelectorAll('table').find(t => {
+  const table = parseDoc(html).querySelectorAll('table').find(t => {
     const h = tableHeaders(t);
     return h.includes('Requisição') && h.includes('Laboratório');
   });
@@ -543,7 +556,7 @@ export interface SgqRequisitionProperty {
 
 /** requisicao_*_editar.php?cod_requisicoes=N — propriedade onde o animal estava na coleta. */
 export function parseRequisitionProperty(html: string): SgqRequisitionProperty | null {
-  const root = parse(html);
+  const root = parseDoc(html);
   if (!root.querySelector('[name="nome_do_animal"]')) return null;
   const uf = inputValue(root, 'uf_propriedade').toUpperCase();
   const city = meaningful(inputValue(root, 'municipio'));
@@ -559,7 +572,7 @@ export function parseRequisitionProperty(html: string): SgqRequisitionProperty |
  * servidores da SGQ. Devolve a URL só se for https em *.sgqsistemas.com.br.
  */
 export function parseLaudoUrl(html: string): string | null {
-  const root = parse(html);
+  const root = parseDoc(html);
   const raw = root.querySelector('object[data]')?.getAttribute('data')
     ?? root.querySelector('a[download]')?.getAttribute('href')
     ?? '';

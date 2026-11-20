@@ -28,8 +28,16 @@ import { maskCpfCnpj } from '../br';
 
 /** Intervalo mínimo entre dois acessos ao portal (aplicado no servidor). */
 export const MIN_INTERVAL_MS = 2_500;
-/** Trava de um passo em execução; expira sozinha se a função cair. */
-const LOCK_MS = 90_000;
+/** Trava de um passo em execução; expira sozinha se a função cair (o limite da função é 60 s). */
+const LOCK_MS = 70_000;
+/**
+ * Tempo máximo de um passo. Fica abaixo do limite da função para que o
+ * servidor ainda consiga responder dizendo ONDE parou, em vez de ser
+ * derrubado sem resposta.
+ */
+const TICK_BUDGET_MS = 45_000;
+
+class TickTimeout extends Error {}
 const MAX_ISSUES = 40;
 const MAX_CONSECUTIVE_ERRORS = 5;
 
@@ -38,7 +46,11 @@ export interface SyncContext {
   admin: any;     // service_role — credenciais, jobs e fila
   db: any;        // sessão do veterinário — tabelas vet_* (RLS)
   vetId: string;
+  /** O que o passo está fazendo agora — vai na mensagem se ele estourar o tempo */
+  trace?: string;
 }
+
+const mark = (ctx: SyncContext, what: string) => { ctx.trace = what; };
 
 export interface SyncStats {
   owners:     { found: number; created: number; matched: number; noCpf: number };
@@ -202,7 +214,10 @@ async function loadIntegration(ctx: SyncContext) {
 
 /** Lê uma página reaproveitando a sessão salva; refaz o login uma única vez. */
 export async function fetchPage(ctx: SyncContext, page: string): Promise<string> {
+  const pageName = page.replace(/\?.*$/, '');
+  mark(ctx, `lendo credenciais da integração (${pageName})`);
   const integration = await loadIntegration(ctx);
+  mark(ctx, `aguardando o portal SGQ responder ${pageName}`);
 
   if (integration.session_enc) {
     let cookie: string | null = null;
@@ -214,6 +229,7 @@ export async function fetchPage(ctx: SyncContext, page: string): Promise<string>
     }
   }
 
+  mark(ctx, `refazendo o login no portal SGQ (${pageName})`);
   const cookie = await sgqLogin(integration.username, decryptSecret(integration.secret_enc));
   await must(
     ctx.admin.from('vet_integrations')
@@ -222,6 +238,7 @@ export async function fetchPage(ctx: SyncContext, page: string): Promise<string>
   );
   await sleep(800);
 
+  mark(ctx, `aguardando o portal SGQ responder ${pageName} (após novo login)`);
   const res = await sgqGet(cookie, page);
   if (!res.loggedIn) throw new SgqAuthError('A sessão do portal não se manteve.');
   return res.html;
@@ -232,6 +249,7 @@ export async function fetchPage(ctx: SyncContext, page: string): Promise<string>
 async function syncOwners(ctx: SyncContext, jobId: string, stats: SyncStats): Promise<SyncEvent> {
   const rows = parseOwnerList(await fetchPage(ctx, 'proprietario_lista.php'));
   if (!rows) throw new Error('A lista de proprietários do portal mudou de formato.');
+  mark(ctx, `gravando ${rows.length} proprietários no banco`);
 
   const existing = await fetchAll(() =>
     ctx.db.from('vet_owners')
@@ -308,6 +326,7 @@ async function syncOwners(ctx: SyncContext, jobId: string, stats: SyncStats): Pr
 async function syncProperties(ctx: SyncContext, jobId: string, stats: SyncStats): Promise<SyncEvent> {
   const rows = parsePropertyList(await fetchPage(ctx, 'propriedade_lista.php'));
   if (!rows) throw new Error('A lista de propriedades do portal mudou de formato.');
+  mark(ctx, `gravando ${rows.length} propriedades no banco`);
 
   const existing = await fetchAll(() =>
     ctx.db.from('vet_properties')
@@ -387,6 +406,7 @@ const equineKey = (ownerId: string, name: string) => `${ownerId}|${normalizeKey(
 async function syncAnimals(ctx: SyncContext, jobId: string, stats: SyncStats): Promise<SyncEvent> {
   const rows = parseAnimalList(await fetchPage(ctx, 'animal_lista.php'));
   if (!rows) throw new Error('A lista de animais do portal mudou de formato.');
+  mark(ctx, `gravando ${rows.length} animais no banco`);
 
   const [existing, ownerItems] = await Promise.all([
     fetchAll(() =>
@@ -497,6 +517,7 @@ async function syncExams(ctx: SyncContext, stats: SyncStats): Promise<SyncEvent>
   const rows = parseExamList(await fetchPage(ctx, `requisicao_${type}_lista.php`));
   if (!rows) throw new Error('A lista de requisições do portal mudou de formato.');
 
+  mark(ctx, `lendo exames e animais já cadastrados (${rows.length} requisições de ${EXAM_LABEL[type]})`);
   const [existing, equines, owners] = await Promise.all([
     fetchAll(() =>
       ctx.db.from('vet_equine_exams')
@@ -532,6 +553,7 @@ async function syncExams(ctx: SyncContext, stats: SyncStats): Promise<SyncEvent>
   let created = 0;
   let linked = 0;
 
+  mark(ctx, `atualizando exames de ${EXAM_LABEL[type]} já cadastrados`);
   for (const row of rows) {
     const equineId = resolve(row.ownerName, row.animalName);
     const known = byNumber.get(row.number);
@@ -558,7 +580,8 @@ async function syncExams(ctx: SyncContext, stats: SyncStats): Promise<SyncEvent>
     }
   }
 
-  await insertChunks(ctx.db, 'vet_equine_exams', inserts);
+  mark(ctx, `gravando ${inserts.length} exames de ${EXAM_LABEL[type]} no banco`);
+  await insertChunks(ctx.db, 'vet_equine_exams', inserts, 500);
 
   stats.exams.found += rows.length;
   stats.exams.created += created;
@@ -741,6 +764,7 @@ async function syncFichaExtras(ctx: SyncContext, equine: any, ficha: SgqAnimalFi
 async function syncAnimalDetail(ctx: SyncContext, jobId: string, item: any, stats: SyncStats): Promise<ItemResult> {
   const ficha = parseAnimalFicha(await fetchPage(ctx, `animal_ficha.php?cod_animal=${item.sgq_code}`));
   if (!ficha) throw new Error('ficha do animal em formato inesperado');
+  mark(ctx, 'gravando a ficha do animal no banco');
 
   const skipped = (note: string): ItemResult =>
     ({ status: 'skipped', note, event: { scope: 'animal', title: ficha.name, outcome: 'skipped', note, changes: [] } });
@@ -809,6 +833,7 @@ async function syncAnimalDetail(ctx: SyncContext, jobId: string, item: any, stat
     localId = equine.id;
   }
 
+  mark(ctx, 'gravando exames, histórico e imagens da ficha');
   const extras = await syncFichaExtras(ctx, equine, ficha, stats);
   if (outcome === 'unchanged' && extras.some(c => c.written)) outcome = 'updated';
 
@@ -1053,6 +1078,7 @@ function errorMessage(err: unknown): string {
   if (err instanceof SgqBlockedError) {
     return 'O portal SGQ recusou o acesso. A sincronização foi interrompida — tente novamente mais tarde.';
   }
+  if (err instanceof TickTimeout) return err.message;
   if (err instanceof Error && /portal/i.test(err.message)) return err.message;
   // Erros do banco chegam como objeto { code, message } — o detalhe poupa uma ida aos logs
   const e = err as { code?: unknown; message?: unknown } | null;
@@ -1061,34 +1087,15 @@ function errorMessage(err: unknown): string {
 }
 
 /** Executa um passo de um job já reservado por claimTick(). */
-export async function runTick(ctx: SyncContext, job: any): Promise<{ job: JobView; event: SyncEvent | null }> {
+export async function runTick(ctx: SyncContext, job: any): Promise<{ job: JobView; event: SyncEvent | null; ms: number }> {
+  const startedAt = Date.now();
   const stats = withDefaults(job.stats);
   let update: Record<string, unknown>;
   let event: SyncEvent | null = null;
 
   try {
-    let phase: JobView['phase'] = job.phase;
-
-    if (phase === 'owners') {
-      // Recomeço limpo caso um passo anterior tenha caído no meio
-      await must(ctx.admin.from('sgq_sync_items').delete().eq('job_id', job.id));
-      event = await syncOwners(ctx, job.id, stats);
-      phase = 'properties';
-    } else if (phase === 'properties') {
-      await must(ctx.admin.from('sgq_sync_items').delete().eq('job_id', job.id).eq('kind', 'property'));
-      event = await syncProperties(ctx, job.id, stats);
-      phase = 'animals';
-    } else if (phase === 'animals') {
-      await must(ctx.admin.from('sgq_sync_items').delete().eq('job_id', job.id).eq('kind', 'animal'));
-      event = await syncAnimals(ctx, job.id, stats);
-      phase = 'exams';
-    } else if (phase === 'exams') {
-      event = await syncExams(ctx, stats);
-      if (stats.exams.cursor >= EXAM_TYPES.length) phase = 'details';
-    } else if (phase === 'details') {
-      event = await syncNextDetail(ctx, job.id, stats);
-      if (!event) phase = 'done';
-    }
+    const { phase, event: stepEvent } = await withBudget(ctx, () => runPhase(ctx, job, stats));
+    event = stepEvent;
 
     update = { phase, stats, tick_lock_until: new Date(Date.now() + MIN_INTERVAL_MS).toISOString() };
 
@@ -1103,7 +1110,7 @@ export async function runTick(ctx: SyncContext, job: any): Promise<{ job: JobVie
     }
   } catch (err) {
     if (!(err instanceof SgqAuthError) && !(err instanceof SgqBlockedError)) {
-      console.error('[sgq/sync] job', job.id, job.phase, err);
+      console.error('[sgq/sync] job', job.id, job.phase, ctx.trace, err);
     }
     update = { stats, status: 'error', error: errorMessage(err), finished_at: new Date().toISOString() };
   }
@@ -1113,7 +1120,59 @@ export async function runTick(ctx: SyncContext, job: any): Promise<{ job: JobVie
     ctx.admin.from('sgq_sync_jobs').update(update)
       .eq('id', job.id).eq('status', 'running').select().maybeSingle(),
   );
-  if (saved) return { job: jobView(saved), event };
+  const ms = Date.now() - startedAt;
+  if (saved) return { job: jobView(saved), event, ms };
   const current = await must<any>(ctx.admin.from('sgq_sync_jobs').select().eq('id', job.id).single());
-  return { job: jobView(current), event };
+  return { job: jobView(current), event, ms };
+}
+
+/**
+ * Interrompe a espera por um passo que passou do tempo. O trabalho em curso não
+ * pode ser cancelado, mas tudo o que ele grava é idempotente, então repetir o
+ * passo depois não duplica nada.
+ */
+async function withBudget<T>(ctx: SyncContext, work: () => Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new TickTimeout(
+        `Um passo levou mais de ${TICK_BUDGET_MS / 1000} s e foi interrompido — estava ${ctx.trace ?? 'iniciando'}. ` +
+        'Nada foi perdido: sincronize de novo para continuar do mesmo ponto.',
+      ));
+    }, TICK_BUDGET_MS);
+  });
+  try {
+    return await Promise.race([work(), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Uma etapa da sincronização; devolve a fase em que o job fica depois dela. */
+async function runPhase(ctx: SyncContext, job: any, stats: SyncStats): Promise<{ phase: JobView['phase']; event: SyncEvent | null }> {
+  let event: SyncEvent | null = null;
+  let phase: JobView['phase'] = job.phase;
+
+  if (phase === 'owners') {
+    // Recomeço limpo caso um passo anterior tenha caído no meio
+    await must(ctx.admin.from('sgq_sync_items').delete().eq('job_id', job.id));
+    event = await syncOwners(ctx, job.id, stats);
+    phase = 'properties';
+  } else if (phase === 'properties') {
+    await must(ctx.admin.from('sgq_sync_items').delete().eq('job_id', job.id).eq('kind', 'property'));
+    event = await syncProperties(ctx, job.id, stats);
+    phase = 'animals';
+  } else if (phase === 'animals') {
+    await must(ctx.admin.from('sgq_sync_items').delete().eq('job_id', job.id).eq('kind', 'animal'));
+    event = await syncAnimals(ctx, job.id, stats);
+    phase = 'exams';
+  } else if (phase === 'exams') {
+    event = await syncExams(ctx, stats);
+    if (stats.exams.cursor >= EXAM_TYPES.length) phase = 'details';
+  } else if (phase === 'details') {
+    event = await syncNextDetail(ctx, job.id, stats);
+    if (!event) phase = 'done';
+  }
+
+  return { phase, event };
 }

@@ -247,6 +247,29 @@ describe('exames, saúde e arquivos', () => {
     expect(parseAnimalFicha(html)).toMatchObject({ resenhoSrc: null, photoSrc: null });
   });
 
+  it('lê a lista real, que tem um <b> aberto e nunca fechado em cada linha', () => {
+    // Estrutura copiada do HTML bruto do portal (o navegador esconde o defeito ao consertar a árvore)
+    const row = (i: number) => `<tr> <td><div class="notify-thumb-lista"><a href="#" onClick="relatorio('${900000 + i}')"><i class="ti-printer"></i></a></div> <div class="notify-thumb-lista"><a href="#" onClick="laudo('${900000 + i}')"><i class="fa fa-file-pdf-o"></i></a></div></td> <td><b><font face="Verdana" style="font-size: 7pt" color="#FFFFFF"><span class="status-p bg-success">${i % 2 ? 'Disponivel' : ''}</span></font></td> <td><b><font style="font-size: 9pt">PCR${900000 + i}</font></b></td> <td><font style="font-size: 9pt">DONO ${i}</font></td> <td><font style="font-size: 9pt">ANIMAL ${i}</font></td> <td><font style="font-size: 9pt">2026-09-20</font></td> <td><font style="font-size: 9pt">LAB &amp; CIA</font></td> </tr>`;
+    const html = page(`<table id="example"><thead><tr><th></th><th>Laudo</th><th>Requisição</th><th>Proprietário</th><th>Animal</th><th>Colheita</th><th>Laboratório</th></tr></thead><tbody>${Array.from({ length: 704 }, (_, i) => row(i)).join('\n')}</tbody></table>`);
+
+    const started = performance.now();
+    const rows = parseExamList(html)!;
+    const elapsed = performance.now() - started;
+
+    expect(rows).toHaveLength(704);
+    expect(rows[0]).toEqual({ code: '900000', number: 'PCR900000', ownerName: 'DONO 0', animalName: 'ANIMAL 0', collectionDate: '2026-09-20', laboratory: 'LAB & CIA', laudoAvailable: false });
+    expect(rows[703]).toMatchObject({ code: '900703', number: 'PCR900703', animalName: 'ANIMAL 703', laudoAvailable: true });
+    // Sem a limpeza das tags de formatação isto levava minutos
+    expect(elapsed).toBeLessThan(3_000);
+  });
+
+  it('não confunde tags de formatação com <body>, <br> ou <button>', () => {
+    const html = page(`<table id="example"><thead><tr><th></th><th>Proprietário</th><th>CPF/CNPJ</th><th>Cidade - UF</th><th>Telefone</th><th>E-mail</th></tr></thead><tbody>
+      <tr><td><button onclick="editar('7')">x</button></td><td><b>ANA<br>PAULA</td><td><font>52998224725</td><td><b><em>CUIABÁ - MT</td><td></td><td></td></tr>
+    </tbody></table>`);
+    expect(parseOwnerList(html)).toMatchObject([{ code: '7', name: 'ANA PAULA', cpfCnpj: '52998224725', city: 'Cuiabá', uf: 'MT' }]);
+  });
+
   it('lê a lista de requisições', () => {
     expect(parseExamList(EXAM_LIST)).toEqual([
       { code: '905892', number: 'PCR905892', ownerName: 'JOÃO DA SILVA', animalName: '7 OURO', collectionDate: '2026-09-20', laboratory: 'LAB EXEMPLO', laudoAvailable: true },
