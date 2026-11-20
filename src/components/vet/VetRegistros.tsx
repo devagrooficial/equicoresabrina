@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { createClient, resolveDocUrl } from '../../lib/supabase';
 import { maskCpfCnpj } from '../../lib/br';
+import { countBy, fetchAllRows } from '../../lib/vetRecords';
+import { RecordStyles } from './recordUI';
 import { VET_BLUE, VET_BLUE_LIGHT, inputStyle } from './formUI';
 import { Lightbox, useLightbox } from '../shared/Lightbox';
 
@@ -9,7 +11,8 @@ function isImagePath(path: string): boolean {
 }
 
 // Listagem central da área veterinária: Equinos, Proprietários e Propriedades.
-// Mostra apenas os registros do próprio veterinário (RLS).
+// Mostra apenas os registros do próprio veterinário (RLS). Cada linha abre a
+// ficha do cadastro, e os nomes de proprietário e propriedade levam à ficha deles.
 
 type Tab = 'equinos' | 'proprietarios' | 'propriedades';
 
@@ -27,8 +30,8 @@ interface EquineRow {
   owner_id: string | null;
   property_id: string | null;
   // computed client-side after join
-  owner?: { name: string; cpf_cnpj: string } | null;
-  property?: { name: string } | null;
+  owner?: { id: string; name: string; cpf_cnpj: string } | null;
+  property?: { id: string; name: string } | null;
 }
 
 interface OwnerRow {
@@ -68,6 +71,12 @@ const EDIT_LINKS: Record<Tab, string> = {
   equinos:       '/vet/cadastros/equino?id=',
   proprietarios: '/vet/cadastros/proprietario?id=',
   propriedades:  '/vet/cadastros/propriedade?id=',
+};
+
+const DETAIL_LINKS: Record<Tab, string> = {
+  equinos:       '/vet/equino/',
+  proprietarios: '/vet/proprietario/',
+  propriedades:  '/vet/propriedade/',
 };
 
 const TABLES: Record<Tab, string> = {
@@ -123,19 +132,20 @@ export default function VetRegistros({ initialTab }: { initialTab?: string | nul
   async function loadAll() {
     setLoading(true);
     setError(null);
+    // Paginado: o Supabase devolve no máximo 1000 linhas por requisição
     const [eq, ow, pr] = await Promise.all([
-      supabase
+      fetchAllRows<any>((from, to) => supabase
         .from('vet_equines')
         .select('id, name, species, breed, sex, registry_brand, chip, resenha_url, shared_with_owner, created_at, owner_id, property_id')
-        .order('created_at', { ascending: false }),
-      supabase
+        .order('created_at', { ascending: false }).order('id').range(from, to)),
+      fetchAllRows<any>((from, to) => supabase
         .from('vet_owners')
         .select('id, name, cpf_cnpj, phone, email, city, uf, producer_number')
-        .order('name'),
-      supabase
+        .order('name').order('id').range(from, to)),
+      fetchAllRows<any>((from, to) => supabase
         .from('vet_properties')
         .select('id, name, city, uf, classification, oesa_code, animal_count')
-        .order('name'),
+        .order('name').order('id').range(from, to)),
     ]);
 
     const firstError = eq.error ?? ow.error ?? pr.error;
@@ -241,6 +251,21 @@ export default function VetRegistros({ initialTab }: { initialTab?: string | nul
     return properties.filter(r => match(r.name, r.city, r.uf, r.classification, r.oesa_code));
   }, [tab, search, equinos, owners, properties]);
 
+  // Vínculos derivados dos animais: quantos cada proprietário e cada propriedade tem
+  const animalsByOwner    = useMemo(() => countBy(equinos, 'owner_id'), [equinos]);
+  const animalsByProperty = useMemo(() => countBy(equinos, 'property_id'), [equinos]);
+
+  /** Linha clicável: abre a ficha, a não ser que o clique tenha sido em um botão ou link da linha. */
+  const rowProps = (id: string) => ({
+    className: 'rec-row',
+    style: { cursor: 'pointer' } as React.CSSProperties,
+    onClick: (e: React.MouseEvent<HTMLTableRowElement>) => {
+      if ((e.target as HTMLElement).closest('a, button')) return;
+      if (window.getSelection()?.toString()) return;   // o usuário está selecionando texto (ex.: copiar o CPF)
+      window.location.href = `${DETAIL_LINKS[tab]}${id}`;
+    },
+  });
+
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage   = Math.min(page, totalPages - 1);
   const visible    = filtered.slice(safePage * pageSize, (safePage + 1) * pageSize);
@@ -262,6 +287,10 @@ export default function VetRegistros({ initialTab }: { initialTab?: string | nul
     borderBottom: '1px solid hsl(var(--border))',
   };
   const tdMuted: React.CSSProperties = { ...tdStyle, color: 'hsl(var(--muted-foreground))' };
+  const countStyle = (n: number): React.CSSProperties => ({
+    ...tdStyle, textAlign: 'right', fontWeight: 600, fontVariantNumeric: 'tabular-nums',
+    color: n > 0 ? 'hsl(var(--foreground))' : 'hsl(var(--muted-foreground))',
+  });
 
   function renderTable() {
     if (loading) {
@@ -297,10 +326,10 @@ export default function VetRegistros({ initialTab }: { initialTab?: string | nul
             </tr></thead>
             <tbody>
               {(visible as EquineRow[]).map(r => (
-                <tr key={r.id}>
+                <tr key={r.id} {...rowProps(r.id)}>
                   <td style={tdStyle}>
                     <div style={{ display: 'flex', gap: 6 }}>
-                      <ActionButton title="Exames e histórico" color="hsl(262 60% 50%)" href={`/vet/equino/${r.id}`}><HistoryIcon /></ActionButton>
+                      <ActionButton title="Abrir ficha do animal" color="hsl(262 60% 50%)" href={`/vet/equino/${r.id}`}><HistoryIcon /></ActionButton>
                       <ActionButton title="Editar" color="hsl(221 83% 45%)" href={`${EDIT_LINKS.equinos}${r.id}`}><PencilIcon /></ActionButton>
                       <ActionButton title="Excluir" color="hsl(0 84% 50%)" onClick={() => handleDelete(r.id, r.name)}><TrashIcon /></ActionButton>
                       {r.resenha_url && (
@@ -322,18 +351,22 @@ export default function VetRegistros({ initialTab }: { initialTab?: string | nul
                     </div>
                   </td>
                   <td style={{ ...tdStyle, fontWeight: 600 }}>
-                    {r.name}
+                    <a href={`/vet/equino/${r.id}`} className="rec-link">{r.name}</a>
                     {r.shared_with_owner && (
                       <span style={{ marginLeft: 6, fontSize: '0.625rem', fontWeight: 700, padding: '1px 5px', borderRadius: 999, background: 'hsl(142 71% 35% / 0.12)', color: 'hsl(142 71% 30%)' }}>
                         compartilhado
                       </span>
                     )}
                   </td>
-                  <td style={tdStyle}>{r.owner?.name ?? '—'}</td>
+                  <td style={tdStyle}>
+                    {r.owner ? <a href={`/vet/proprietario/${r.owner.id}`} className="rec-link">{r.owner.name}</a> : '—'}
+                  </td>
                   <td style={tdMuted}>{r.owner ? maskCpfCnpj(r.owner.cpf_cnpj) : '—'}</td>
                   <td style={tdMuted}>{[r.species, r.breed].filter(Boolean).join(' / ') || '—'}</td>
                   <td style={tdMuted}>{[r.registry_brand, r.chip].filter(Boolean).join(' / ') || '—'}</td>
-                  <td style={tdMuted}>{r.property?.name ?? '—'}</td>
+                  <td style={tdMuted}>
+                    {r.property ? <a href={`/vet/propriedade/${r.property.id}`} className="rec-link">{r.property.name}</a> : '—'}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -354,22 +387,26 @@ export default function VetRegistros({ initialTab }: { initialTab?: string | nul
               <th style={thStyle}>E-mail</th>
               <th style={thStyle}>Cidade/UF</th>
               <th style={thStyle}>Nº Produtor</th>
+              <th style={{ ...thStyle, textAlign: 'right' }}>Animais</th>
             </tr></thead>
             <tbody>
               {(visible as OwnerRow[]).map(r => (
-                <tr key={r.id}>
+                <tr key={r.id} {...rowProps(r.id)}>
                   <td style={tdStyle}>
                     <div style={{ display: 'flex', gap: 6 }}>
                       <ActionButton title="Editar" color="hsl(221 83% 45%)" href={`${EDIT_LINKS.proprietarios}${r.id}`}><PencilIcon /></ActionButton>
                       <ActionButton title="Excluir" color="hsl(0 84% 50%)" onClick={() => handleDelete(r.id, r.name)}><TrashIcon /></ActionButton>
                     </div>
                   </td>
-                  <td style={{ ...tdStyle, fontWeight: 600 }}>{r.name}</td>
+                  <td style={{ ...tdStyle, fontWeight: 600 }}>
+                    <a href={`/vet/proprietario/${r.id}`} className="rec-link">{r.name}</a>
+                  </td>
                   <td style={tdMuted}>{maskCpfCnpj(r.cpf_cnpj)}</td>
                   <td style={tdMuted}>{r.phone ?? '—'}</td>
                   <td style={tdMuted}>{r.email ?? '—'}</td>
                   <td style={tdMuted}>{[r.city, r.uf].filter(Boolean).join('/') || '—'}</td>
                   <td style={tdMuted}>{r.producer_number ?? '—'}</td>
+                  <td style={countStyle(animalsByOwner.get(r.id) ?? 0)}>{animalsByOwner.get(r.id) ?? 0}</td>
                 </tr>
               ))}
             </tbody>
@@ -387,22 +424,26 @@ export default function VetRegistros({ initialTab }: { initialTab?: string | nul
             <th style={thStyle}>Cidade/UF</th>
             <th style={thStyle}>Classificação</th>
             <th style={thStyle}>Nº Cadastro OESA</th>
-            <th style={thStyle}>Qtd. Animais</th>
+            <th style={{ ...thStyle, textAlign: 'right' }} title="Quantidade informada no cadastro da propriedade">Declarados</th>
+            <th style={{ ...thStyle, textAlign: 'right' }} title="Animais ligados a esta propriedade no EquiCore">Animais</th>
           </tr></thead>
           <tbody>
             {(visible as PropertyRow[]).map(r => (
-              <tr key={r.id}>
+              <tr key={r.id} {...rowProps(r.id)}>
                 <td style={tdStyle}>
                   <div style={{ display: 'flex', gap: 6 }}>
                     <ActionButton title="Editar" color="hsl(221 83% 45%)" href={`${EDIT_LINKS.propriedades}${r.id}`}><PencilIcon /></ActionButton>
                     <ActionButton title="Excluir" color="hsl(0 84% 50%)" onClick={() => handleDelete(r.id, r.name)}><TrashIcon /></ActionButton>
                   </div>
                 </td>
-                <td style={{ ...tdStyle, fontWeight: 600 }}>{r.name}</td>
+                <td style={{ ...tdStyle, fontWeight: 600 }}>
+                  <a href={`/vet/propriedade/${r.id}`} className="rec-link">{r.name}</a>
+                </td>
                 <td style={tdMuted}>{[r.city, r.uf].filter(Boolean).join('/') || '—'}</td>
                 <td style={tdMuted}>{r.classification ?? '—'}</td>
                 <td style={tdMuted}>{r.oesa_code ?? '—'}</td>
-                <td style={tdMuted}>{r.animal_count ?? '—'}</td>
+                <td style={{ ...tdMuted, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{r.animal_count ?? '—'}</td>
+                <td style={countStyle(animalsByProperty.get(r.id) ?? 0)}>{animalsByProperty.get(r.id) ?? 0}</td>
               </tr>
             ))}
           </tbody>
@@ -413,12 +454,13 @@ export default function VetRegistros({ initialTab }: { initialTab?: string | nul
 
   return (
     <main className="w-full max-w-7xl mx-auto px-4 md:px-8 py-8 space-y-6">
+      <RecordStyles />
 
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 style={{ fontSize: '1.25rem', fontWeight: 800, letterSpacing: '-0.02em', color: 'hsl(var(--foreground))' }}>Registros</h1>
           <p style={{ fontSize: '0.875rem', color: 'hsl(var(--muted-foreground))', marginTop: 2 }}>
-            Seus cadastros de equinos, proprietários e propriedades
+            Seus cadastros de equinos, proprietários e propriedades. Clique em uma linha para abrir a ficha.
           </p>
         </div>
         <a href={NEW_LINKS[tab].href}

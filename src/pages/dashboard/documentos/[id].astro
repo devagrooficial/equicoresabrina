@@ -1,6 +1,7 @@
 ---
 // Animal acompanhado pelo veterinário, visto pelo dono: situação sanitária
-// (AIE e mormo), laudos, resenho e histórico de saúde. O acesso é decidido
+// (AIE e mormo), laudos, resenho, histórico de saúde e os vínculos do animal
+// (proprietário, propriedade e veterinário). O acesso é decidido
 // pelo RLS: só aparecem animais que o veterinário compartilhou e cujo
 // proprietário tem o mesmo CPF/CNPJ do perfil do dono.
 export const prerender = false;
@@ -13,6 +14,8 @@ import {
   examValidity, EXAM_GROUP_LABEL, EXAM_VALIDITY_DAYS, formatBrDate, latestExam, overallState,
   type ExamGroup, type ExamState,
 } from '../../../lib/examStatus';
+import { loadEquineLinks } from '../../../lib/vetLinks';
+import VetLinksSection from '../../../components/dashboard/VetLinksSection.astro';
 
 const { id } = Astro.params;
 if (!id || !isValidUUID(id)) return Astro.redirect('/dashboard/documentos');
@@ -21,7 +24,7 @@ const supabase = createServerSupabaseClient(Astro.request, new Headers());
 const { data: { session } } = await supabase.auth.getSession();
 if (!session) return Astro.redirect('/login');
 
-const BASE_COLUMNS = 'id, name, species, breed, coat, sex, birth_date, age_years, registry_brand, chip, signs_desc, resenha_url';
+const BASE_COLUMNS = 'id, name, species, breed, coat, sex, birth_date, age_years, registry_brand, chip, signs_desc, resenha_url, owner_id, property_id, vet_id';
 let { data: equine, error: equineError }: { data: any; error: any } = await supabase
   .from('vet_equines')
   .select(`${BASE_COLUMNS}, portal_photo_url`)
@@ -48,6 +51,22 @@ interface HealthRecord {
   title: string | null;
   data: Record<string, string>;
 }
+
+// Vínculos: os cadastros do veterinário ligados a este animal (lidos no
+// servidor, só para o animal que o RLS acabou de liberar) e os outros animais
+// do dono na mesma propriedade (estes pelo próprio RLS).
+const [links, neighborsRes] = await Promise.all([
+  loadEquineLinks([equine]),
+  equine.property_id
+    ? supabase.from('vet_equines').select('id, name').eq('property_id', equine.property_id).neq('id', id).order('name')
+    : Promise.resolve({ data: [] as { id: string; name: string }[] }),
+]);
+const owner = links.owners.get(equine.owner_id) ?? null;
+const property = equine.property_id ? links.properties.get(equine.property_id) ?? null : null;
+const vet = links.vets.get(equine.vet_id) ?? null;
+const neighbors = (neighborsRes.data ?? []) as { id: string; name: string }[];
+const showLinks = !!(owner || property || vet);
+const propertyPlace = property ? [property.city, property.uf].filter(Boolean).join('/') : '';
 
 const [examsRes, healthRes] = await Promise.all([
   supabase.from('vet_equine_exams')
@@ -134,6 +153,11 @@ const GREEN = 'hsl(168 83% 29%)';
               Acompanhado pelo seu veterinário
             </p>
             <h1 class="text-xl md:text-2xl font-extrabold tracking-tight text-foreground leading-tight break-words">{equine.name}</h1>
+            {property && (
+              <p class="text-sm text-muted-foreground mt-0.5 break-words">
+                em <span class="font-semibold text-foreground">{property.name}</span>{propertyPlace ? ` · ${propertyPlace}` : ''}
+              </p>
+            )}
             {chips.length > 0 && (
               <div class="flex flex-wrap gap-1.5 mt-2">
                 {chips.map(chip => (
@@ -153,6 +177,9 @@ const GREEN = 'hsl(168 83% 29%)';
         </div>
       </div>
     </section>
+
+    {/* ── Vínculos ── */}
+    {showLinks && <VetLinksSection owner={owner} property={property} vet={vet} neighbors={neighbors} />}
 
     {/* ── Situação sanitária ── */}
     <section aria-labelledby="sanitaria">

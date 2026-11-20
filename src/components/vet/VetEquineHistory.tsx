@@ -1,25 +1,43 @@
 import { useEffect, useState } from 'react';
 import { createClient, isValidUUID, resolveDocUrl } from '../../lib/supabase';
 import { EXAM_LABEL, HEALTH_KINDS, HEALTH_LABEL, type ExamType, type HealthKind } from '../../lib/sgq/labels';
-import { examValidity, EXAM_VALIDITY_DAYS, formatBrDate } from '../../lib/examStatus';
+import { examValidity, EXAM_VALIDITY_DAYS, formatBrDate, overallState } from '../../lib/examStatus';
+import { maskCpfCnpj } from '../../lib/br';
+import { cityUf, plural } from '../../lib/vetRecords';
+import { Lightbox, useLightbox } from '../shared/Lightbox';
+import { PHOTO_SLOTS } from '../shared/EquinePhotos';
 import { Banner, VET_BLUE } from './formUI';
+import {
+  Avatar, ButtonLink, C, Chip, Crumbs, EmptyLinkCard, HEALTH_TITLE, ICON, Icon, Info, LinkCard, Loading,
+  SanitaryCards, Section, Shell, TONE,
+} from './recordUI';
 
-// Histórico do animal na área veterinária: identificação, resenho e foto,
-// exames (com laudo) e registros de saúde. Hoje os exames e o histórico vêm
-// da sincronização com o portal SGQ.
+// Ficha do animal na área veterinária: quem é, de quem é e onde está
+// (proprietário e propriedade), situação sanitária, exames com laudo e
+// histórico de saúde. Exames e histórico vêm da sincronização com o portal SGQ.
 
-const C = {
-  fg:     'hsl(var(--foreground))',
-  muted:  'hsl(var(--muted-foreground))',
-  card:   'hsl(var(--card))',
-  border: 'hsl(var(--border))',
-  green:  'hsl(142 71% 35%)',
-  red:    'hsl(0 84.2% 50%)',
-  amber:  'hsl(35 92% 40%)',
-};
+interface Owner {
+  id: string;
+  name: string;
+  cpf_cnpj: string;
+  phone: string | null;
+  email: string | null;
+  city: string | null;
+  uf: string | null;
+}
+
+interface Property {
+  id: string;
+  name: string;
+  city: string | null;
+  uf: string | null;
+  classification: string | null;
+  oesa_code: string | null;
+}
 
 interface Equine {
   id: string;
+  vet_id: string;
   name: string;
   species: string | null;
   breed: string | null;
@@ -32,8 +50,10 @@ interface Equine {
   signs_desc: string | null;
   resenha_url: string | null;
   portal_photo_url: string | null;
-  owner: { name: string } | null;
-  property: { name: string } | null;
+  marca_fogo_url: string | null;
+  shared_with_owner: boolean;
+  owner: Owner | null;
+  property: Property | null;
 }
 
 interface Exam {
@@ -54,14 +74,11 @@ interface HealthRecord {
   data: Record<string, string>;
 }
 
-const brDate = (iso: string | null) => formatBrDate(iso);
+interface Picture { label: string; url: string; light?: boolean }
 
-const STATE_COLOR = { valid: C.green, expiring: C.amber, expired: C.red } as const;
+const BASE_COLUMNS = 'id, vet_id, name, species, breed, coat, sex, birth_date, age_years, registry_brand, chip, signs_desc, resenha_url, shared_with_owner, '
+  + 'owner:vet_owners(id, name, cpf_cnpj, phone, email, city, uf), property:vet_properties(id, name, city, uf, classification, oesa_code)';
 
-const card: React.CSSProperties = {
-  background: C.card, border: `1px solid ${C.border}`, borderRadius: '1rem', padding: '1.5rem', marginBottom: '1.25rem',
-};
-const h2: React.CSSProperties = { fontSize: '1rem', fontWeight: 700, color: C.fg, marginBottom: '0.75rem' };
 const th: React.CSSProperties = {
   padding: '0.5rem 0.625rem', fontSize: '0.75rem', fontWeight: 600, color: C.muted, textAlign: 'left', whiteSpace: 'nowrap',
 };
@@ -69,31 +86,44 @@ const td: React.CSSProperties = {
   padding: '0.5rem 0.625rem', fontSize: '0.8125rem', color: C.fg, borderTop: `1px solid ${C.border}`, verticalAlign: 'top',
 };
 
-function Info({ label, value }: { label: string; value: string | null | undefined }) {
-  return (
-    <div>
-      <dt style={{ fontSize: '0.75rem', color: C.muted }}>{label}</dt>
-      <dd style={{ fontSize: '0.875rem', color: C.fg, fontWeight: 500, margin: 0 }}>{value || '—'}</dd>
-    </div>
-  );
+const isImage = (path: string | null | undefined) => !!path && /\.(png|jpe?g|webp)$/i.test(path.split('?')[0]);
+
+/**
+ * Fotos do cadastro (frente, costas e laterais). Elas não têm coluna no banco:
+ * ficam na pasta do animal no bucket "docs", com o nome da posição no arquivo.
+ */
+async function loadSlotPhotos(supabase: any, vetId: string, equineId: string): Promise<Picture[]> {
+  const folder = `${vetId}/equinos/${equineId}`;
+  const { data: files } = await supabase.storage.from('docs').list(folder, { limit: 100 });
+  const found = PHOTO_SLOTS.flatMap(slot => {
+    // "Costas" já se chamou "Verso" em cadastros antigos
+    const prefixes = slot.key === 'costas' ? ['foto-costas', 'foto-verso'] : [`foto-${slot.key}`];
+    const file = (files ?? []).find((f: { name: string }) => prefixes.some(prefix => f.name.startsWith(prefix)));
+    return file ? [{ label: slot.label, path: `${folder}/${file.name}` }] : [];
+  });
+  if (found.length === 0) return [];
+  const { data: signed } = await supabase.storage.from('docs').createSignedUrls(found.map(f => f.path), 43_200);
+  return found.flatMap((f, i) => (signed?.[i]?.signedUrl ? [{ label: f.label, url: signed[i].signedUrl }] : []));
 }
 
 export default function VetEquineHistory({ equineId }: { equineId: string }) {
-  const [equine, setEquine]   = useState<Equine | null>(null);
-  const [exams, setExams]     = useState<Exam[]>([]);
-  const [health, setHealth]   = useState<HealthRecord[]>([]);
-  const [images, setImages]   = useState<{ resenho: string | null; photo: string | null }>({ resenho: null, photo: null });
-  const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState<string | null>(null);
+  const [equine, setEquine]     = useState<Equine | null>(null);
+  const [exams, setExams]       = useState<Exam[]>([]);
+  const [health, setHealth]     = useState<HealthRecord[]>([]);
+  const [pictures, setPictures] = useState<Picture[]>([]);
+  const [photo, setPhoto]       = useState<string | null>(null);
+  const [siblings, setSiblings] = useState<{ owner: number | null; property: number | null }>({ owner: null, property: null });
+  const [loading, setLoading]   = useState(true);
+  const [error, setError]       = useState<string | null>(null);
+  const [sharing, setSharing]   = useState(false);
+  const lightbox                = useLightbox();
 
   useEffect(() => {
     if (!isValidUUID(equineId)) { setError('Animal inválido.'); setLoading(false); return; }
     const supabase = createClient();
     (async () => {
-      const [eq, ex, he] = await Promise.all([
-        supabase.from('vet_equines')
-          .select('id, name, species, breed, coat, sex, birth_date, age_years, registry_brand, chip, signs_desc, resenha_url, portal_photo_url, owner:vet_owners(name), property:vet_properties(name)')
-          .eq('id', equineId).maybeSingle(),
+      const [first, ex, he] = await Promise.all([
+        supabase.from('vet_equines').select(`${BASE_COLUMNS}, portal_photo_url, marca_fogo_url`).eq('id', equineId).maybeSingle(),
         supabase.from('vet_equine_exams')
           .select('id, exam_type, number, requested_date, collection_date, laboratory, laudo_available')
           .eq('equine_id', equineId)
@@ -104,8 +134,13 @@ export default function VetEquineHistory({ equineId }: { equineId: string }) {
           .order('event_date', { ascending: false, nullsFirst: false }),
       ]);
 
+      // Banco sem as colunas mais novas (foto do portal, marca de fogo): mostra o cadastro mesmo assim
+      const eq = first.error
+        ? await supabase.from('vet_equines').select(BASE_COLUMNS).eq('id', equineId).maybeSingle()
+        : first;
+
       if (eq.error || !eq.data) {
-        setError(eq.error ? 'Não foi possível carregar o animal. A migration sgq_exams_health.sql já foi aplicada?' : 'Animal não encontrado ou sem permissão de acesso.');
+        setError(eq.error ? 'Não foi possível carregar o animal. Tente novamente.' : 'Animal não encontrado ou sem permissão de acesso.');
         setLoading(false);
         return;
       }
@@ -115,81 +150,210 @@ export default function VetEquineHistory({ equineId }: { equineId: string }) {
       setHealth((he.data ?? []) as HealthRecord[]);
       setLoading(false);
 
-      const isImage = (p: string | null) => !!p && /\.(png|jpe?g|webp)$/i.test(p);
-      const [resenho, photo] = await Promise.all([
-        isImage(row.resenha_url) ? resolveDocUrl(row.resenha_url!) : Promise.resolve(null),
-        isImage(row.portal_photo_url) ? resolveDocUrl(row.portal_photo_url!) : Promise.resolve(null),
+      const count = (column: 'owner_id' | 'property_id', id: string | undefined) => id
+        ? supabase.from('vet_equines').select('id', { count: 'exact', head: true }).eq(column, id).then(r => r.count ?? null)
+        : Promise.resolve(null);
+      const sign = (path: string | null | undefined) => (isImage(path) ? resolveDocUrl(path!) : Promise.resolve(null));
+
+      const [ownerCount, propertyCount, photoUrl, resenho, marca, slotPhotos] = await Promise.all([
+        count('owner_id', row.owner?.id),
+        count('property_id', row.property?.id),
+        sign(row.portal_photo_url),
+        sign(row.resenha_url),
+        sign(row.marca_fogo_url),
+        loadSlotPhotos(supabase, row.vet_id, row.id).catch(() => [] as Picture[]),
       ]);
-      setImages({ resenho, photo });
+      setSiblings({ owner: ownerCount, property: propertyCount });
+      setPhoto(photoUrl ?? slotPhotos.find(p => p.label.startsWith('Lateral'))?.url ?? slotPhotos[0]?.url ?? null);
+      setPictures([
+        photoUrl ? { label: 'Foto (portal SGQ)', url: photoUrl } : null,
+        ...slotPhotos,
+        resenho ? { label: 'Resenho', url: resenho, light: true } : null,
+        marca ? { label: 'Marca de fogo', url: marca } : null,
+      ].filter((p): p is Picture => !!p));
     })();
   }, [equineId]);
 
-  if (loading) {
-    return <main style={{ maxWidth: 900, margin: '0 auto', padding: '2rem 1.5rem' }}><p style={{ color: C.muted, fontSize: '0.875rem' }}>Carregando…</p></main>;
-  }
-  if (error || !equine) {
-    return <main style={{ maxWidth: 900, margin: '0 auto', padding: '2rem 1.5rem' }}><Banner kind="error">{error}</Banner></main>;
+  async function toggleShare() {
+    if (!equine || sharing) return;
+    const next = !equine.shared_with_owner;
+    setSharing(true);
+    const { error: err } = await createClient().from('vet_equines').update({ shared_with_owner: next }).eq('id', equine.id);
+    setSharing(false);
+    if (err) { alert('Não foi possível alterar o compartilhamento. Tente novamente.'); return; }
+    setEquine({ ...equine, shared_with_owner: next });
   }
 
-  const age = equine.age_years !== null ? `${equine.age_years} ${equine.age_years === 1 ? 'ano' : 'anos'}` : null;
+  if (loading) return <Loading />;
+  if (error || !equine) {
+    return (
+      <Shell>
+        <Crumbs trail={[{ label: 'Registros', href: '/vet/registros?tab=equinos' }, { label: 'Animal' }]} />
+        <Banner kind="error">{error}</Banner>
+      </Shell>
+    );
+  }
+
+  const { owner, property } = equine;
+  const age = equine.age_years !== null ? plural(equine.age_years, 'ano', 'anos') : null;
+  const chips = [equine.species, equine.breed, equine.sex, age].filter(Boolean) as string[];
+  const overall = overallState(exams);
+  const others = (n: number | null, where: string) =>
+    n === null ? undefined : n <= 1 ? `Único animal ${where}` : `${plural(n - 1, 'outro animal', 'outros animais')} ${where}`;
 
   return (
-    <main style={{ maxWidth: 900, margin: '0 auto', padding: '2rem 1.5rem' }}>
-      <a href="/vet/registros" style={{ fontSize: '0.8125rem', color: VET_BLUE, textDecoration: 'none', fontWeight: 600 }}>← Registros</a>
+    <Shell>
+      <Crumbs trail={[
+        { label: 'Registros', href: '/vet/registros?tab=equinos' },
+        { label: 'Equinos', href: '/vet/registros?tab=equinos' },
+        { label: equine.name },
+      ]} />
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 12, margin: '0.75rem 0 1.25rem' }}>
-        <h1 style={{ fontSize: '1.5rem', fontWeight: 800, letterSpacing: '-0.02em', color: C.fg }}>{equine.name}</h1>
-        <a href={`/vet/cadastros/equino?id=${equine.id}`}
-           style={{ padding: '0.5rem 1rem', borderRadius: '0.625rem', border: `1px solid ${C.border}`, fontSize: '0.8125rem', fontWeight: 600, color: C.fg, textDecoration: 'none' }}>
-          Editar cadastro
-        </a>
-      </div>
+      {/* ── Cabeçalho ── */}
+      <section className="rounded-2xl border p-5 md:p-6" style={{ borderColor: C.border, background: C.card }}>
+        <div className="flex flex-col md:flex-row md:items-center gap-5">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16, minWidth: 0, flex: 1 }}>
+            {photo ? (
+              <button type="button" onClick={() => lightbox.open(photo)} title="Ampliar foto"
+                      style={{ padding: 0, border: 'none', background: 'none', cursor: 'zoom-in', borderRadius: '1rem', flexShrink: 0 }}>
+                <Avatar label={equine.name} src={photo} size={80} />
+              </button>
+            ) : <Avatar label={equine.name} size={80} />}
+            <div style={{ minWidth: 0 }}>
+              <h1 style={{ fontSize: '1.5rem', fontWeight: 800, letterSpacing: '-0.02em', lineHeight: 1.15, color: C.fg, overflowWrap: 'anywhere' }}>
+                {equine.name}
+              </h1>
+              <p style={{ fontSize: '0.8125rem', color: C.muted, marginTop: 4, overflowWrap: 'anywhere' }}>
+                {owner ? <>de <a href={`/vet/proprietario/${owner.id}`} className="rec-link" style={{ color: C.fg, fontWeight: 600 }}>{owner.name}</a></> : 'Sem proprietário'}
+                {property && <> · em <a href={`/vet/propriedade/${property.id}`} className="rec-link" style={{ color: C.fg, fontWeight: 600 }}>{property.name}</a></>}
+              </p>
+              {chips.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
+                  {chips.map(chip => <Chip key={chip}>{chip}</Chip>)}
+                </div>
+              )}
+            </div>
+          </div>
 
-      {/* Identificação */}
-      <section style={card}>
-        <h2 style={h2}>Identificação</h2>
+          <div className="rounded-xl px-4 py-3 md:max-w-xs" style={{ background: TONE[overall].soft, border: `1px solid ${TONE[overall].border}` }}>
+            <p style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.875rem', fontWeight: 700, color: TONE[overall].color }}>
+              <span style={{ width: 8, height: 8, borderRadius: '50%', background: TONE[overall].color, flexShrink: 0 }} aria-hidden="true" />
+              {HEALTH_TITLE[overall].title}
+            </p>
+            <p style={{ fontSize: '0.75rem', color: C.muted, marginTop: 4, lineHeight: 1.5 }}>{HEALTH_TITLE[overall].text}</p>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, marginTop: 18, paddingTop: 16, borderTop: `1px solid ${C.border}` }}>
+          <ButtonLink href={`/vet/cadastros/equino?id=${equine.id}`} variant="primary" icon={ICON.pencil}>Editar cadastro</ButtonLink>
+          <button type="button" onClick={toggleShare} disabled={sharing} className="rec-btn" aria-pressed={equine.shared_with_owner}
+                  title="O dono vê o animal no aplicativo dele quando o CPF/CNPJ do perfil é o mesmo do proprietário"
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 6, padding: '0.5rem 0.9375rem', borderRadius: '0.625rem',
+                    fontSize: '0.8125rem', fontWeight: 600, cursor: sharing ? 'wait' : 'pointer',
+                    background: equine.shared_with_owner ? TONE.valid.soft : 'transparent',
+                    color: equine.shared_with_owner ? TONE.valid.color : C.fg,
+                    border: `1px solid ${equine.shared_with_owner ? TONE.valid.border : C.border}`,
+                  }}>
+            <Icon d={ICON.share} size={14} />
+            {equine.shared_with_owner ? 'Compartilhado com o dono' : 'Compartilhar com o dono'}
+          </button>
+          <span style={{ fontSize: '0.75rem', color: C.muted }}>
+            {equine.shared_with_owner ? 'Clique para parar de compartilhar.' : 'O dono ainda não vê este animal no aplicativo dele.'}
+          </span>
+        </div>
+      </section>
+
+      {/* ── Vínculos ── */}
+      <section aria-labelledby="vinculos">
+        <h2 id="vinculos" style={{ fontSize: '1rem', fontWeight: 700, letterSpacing: '-0.01em', color: C.fg, marginBottom: 12 }}>Proprietário e propriedade</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {owner ? (
+            <LinkCard
+              eyebrow="Proprietário" icon={ICON.user} title={owner.name} href={`/vet/proprietario/${owner.id}`}
+              facts={[
+                ['CPF/CNPJ', maskCpfCnpj(owner.cpf_cnpj)],
+                ['Telefone', owner.phone],
+                ['E-mail', owner.email],
+                ['Cidade/UF', cityUf(owner.city, owner.uf)],
+              ]}
+              footer={others(siblings.owner, 'deste proprietário')}
+            />
+          ) : (
+            <EmptyLinkCard eyebrow="Proprietário" icon={ICON.user} title="Sem proprietário"
+                           text="O cadastro do proprietário deste animal não foi encontrado."
+                           action={{ href: `/vet/cadastros/equino?id=${equine.id}`, label: 'Escolher proprietário' }} />
+          )}
+          {property ? (
+            <LinkCard
+              eyebrow="Propriedade" icon={ICON.pin} title={property.name} href={`/vet/propriedade/${property.id}`}
+              facts={[
+                ['Cidade/UF', cityUf(property.city, property.uf)],
+                ['Classificação', property.classification],
+                ['Nº OESA', property.oesa_code],
+              ]}
+              footer={others(siblings.property, 'nesta propriedade')}
+            />
+          ) : (
+            <EmptyLinkCard eyebrow="Propriedade" icon={ICON.pin} title="Sem propriedade vinculada"
+                           text="Indique onde o animal fica para vê-lo junto com os outros da mesma propriedade."
+                           action={{ href: `/vet/cadastros/equino?id=${equine.id}`, label: 'Vincular propriedade' }} />
+          )}
+        </div>
+      </section>
+
+      {/* ── Situação sanitária ── */}
+      <section aria-labelledby="sanitaria">
+        <h2 id="sanitaria" style={{ fontSize: '1rem', fontWeight: 700, letterSpacing: '-0.01em', color: C.fg, marginBottom: 12 }}>Situação sanitária</h2>
+        <SanitaryCards exams={exams} />
+        <p style={{ fontSize: '0.75rem', color: C.muted, marginTop: 10, lineHeight: 1.5 }}>
+          Validade estimada em {EXAM_VALIDITY_DAYS} dias após a colheita; confira a data no laudo.
+        </p>
+      </section>
+
+      {/* ── Identificação ── */}
+      <Section title="Identificação">
         <dl className="grid grid-cols-2 md:grid-cols-4 gap-4" style={{ margin: 0 }}>
-          <Info label="Proprietário" value={equine.owner?.name} />
-          <Info label="Propriedade" value={equine.property?.name} />
           <Info label="Espécie" value={equine.species} />
           <Info label="Raça" value={equine.breed} />
           <Info label="Pelagem" value={equine.coat} />
           <Info label="Sexo" value={equine.sex} />
-          <Info label="Nascimento" value={equine.birth_date ? brDate(equine.birth_date) : null} />
+          <Info label="Nascimento" value={equine.birth_date ? formatBrDate(equine.birth_date) : null} />
           <Info label="Idade" value={age} />
           <Info label="Registro/Marca" value={equine.registry_brand} />
-          <Info label="Nº Chip" value={equine.chip} />
+          <Info label="Nº do chip" value={equine.chip} />
         </dl>
         {equine.signs_desc && (
-          <p style={{ fontSize: '0.8125rem', color: C.fg, marginTop: '1rem', lineHeight: 1.5 }}>
-            <span style={{ color: C.muted }}>Sinais: </span>{equine.signs_desc}
-          </p>
-        )}
-        {(images.resenho || images.photo) && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginTop: '1.25rem' }}>
-            {images.photo && (
-              <figure style={{ margin: 0 }}>
-                <a href={images.photo} target="_blank" rel="noreferrer">
-                  <img src={images.photo} alt={`Foto de ${equine.name}`} style={{ maxHeight: 220, maxWidth: '100%', borderRadius: '0.625rem', border: `1px solid ${C.border}` }} />
-                </a>
-                <figcaption style={{ fontSize: '0.75rem', color: C.muted, marginTop: 4 }}>Foto (portal SGQ)</figcaption>
-              </figure>
-            )}
-            {images.resenho && (
-              <figure style={{ margin: 0 }}>
-                <a href={images.resenho} target="_blank" rel="noreferrer">
-                  <img src={images.resenho} alt={`Resenho de ${equine.name}`} style={{ maxHeight: 220, maxWidth: '100%', borderRadius: '0.625rem', border: `1px solid ${C.border}`, background: '#fff' }} />
-                </a>
-                <figcaption style={{ fontSize: '0.75rem', color: C.muted, marginTop: 4 }}>Resenho</figcaption>
-              </figure>
-            )}
+          <div style={{ marginTop: '1rem' }}>
+            <p style={{ fontSize: '0.75rem', color: C.muted }}>Sinais</p>
+            <p style={{ fontSize: '0.875rem', color: C.fg, lineHeight: 1.55 }}>{equine.signs_desc}</p>
           </div>
         )}
-      </section>
+        {pictures.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, marginTop: '1.25rem' }}>
+            {pictures.map(picture => (
+              <figure key={picture.label} style={{ margin: 0 }}>
+                <button type="button" onClick={() => lightbox.open(picture.url)} title={`Ampliar ${picture.label.toLowerCase()}`}
+                        style={{ padding: 0, border: 'none', background: 'none', cursor: 'zoom-in', display: 'block' }}>
+                  <img src={picture.url} alt={`${picture.label} de ${equine.name}`} loading="lazy"
+                       style={{ height: 180, maxWidth: '100%', objectFit: 'contain', borderRadius: '0.625rem', border: `1px solid ${C.border}`, background: picture.light ? '#fff' : 'transparent' }} />
+                </button>
+                <figcaption style={{ fontSize: '0.75rem', color: C.muted, marginTop: 4 }}>{picture.label}</figcaption>
+              </figure>
+            ))}
+          </div>
+        )}
+        {equine.resenha_url && !isImage(equine.resenha_url) && (
+          <button type="button" className="rec-link"
+                  onClick={async () => window.open(await resolveDocUrl(equine.resenha_url!), '_blank', 'noopener,noreferrer')}
+                  style={{ marginTop: '1rem', padding: 0, border: 'none', background: 'none', cursor: 'pointer', fontSize: '0.8125rem', fontWeight: 600, color: VET_BLUE }}>
+            Abrir resenho (PDF) ↗
+          </button>
+        )}
+      </Section>
 
-      {/* Exames */}
-      <section style={card}>
-        <h2 style={h2}>Exames <span style={{ color: C.muted, fontWeight: 500 }}>({exams.length})</span></h2>
+      {/* ── Exames ── */}
+      <Section title="Exames" count={exams.length}>
         {exams.length === 0 ? (
           <p style={{ fontSize: '0.875rem', color: C.muted }}>Nenhum exame registrado para este animal.</p>
         ) : (
@@ -211,20 +375,20 @@ export default function VetEquineHistory({ equineId }: { equineId: string }) {
                       <tr key={exam.id}>
                         <td style={{ ...td, fontWeight: 600 }}>{EXAM_LABEL[exam.exam_type] ?? exam.exam_type}</td>
                         <td style={td}>{exam.number}</td>
-                        <td style={td}>{brDate(exam.collection_date)}</td>
+                        <td style={td}>{formatBrDate(exam.collection_date)}</td>
                         <td style={td}>
                           {v ? (
                             <>
-                              {brDate(v.until)}{' '}
-                              <span style={{ fontSize: '0.6875rem', fontWeight: 700, color: STATE_COLOR[v.state] }}>{v.label}</span>
+                              {formatBrDate(v.until)}{' '}
+                              <span style={{ fontSize: '0.6875rem', fontWeight: 700, color: TONE[v.state].color }}>{v.label}</span>
                             </>
                           ) : '—'}
                         </td>
                         <td style={{ ...td, color: C.muted }}>{exam.laboratory ?? '—'}</td>
                         <td style={td}>
                           {exam.laudo_available ? (
-                            <a href={`/api/sgq/laudo?id=${exam.id}`} target="_blank" rel="noreferrer"
-                               style={{ color: VET_BLUE, fontWeight: 600, textDecoration: 'none' }}>
+                            <a href={`/api/sgq/laudo?id=${exam.id}`} target="_blank" rel="noreferrer" className="rec-link"
+                               style={{ color: VET_BLUE, fontWeight: 600 }}>
                               Abrir PDF
                             </a>
                           ) : <span style={{ color: C.muted }}>Aguardando</span>}
@@ -236,16 +400,14 @@ export default function VetEquineHistory({ equineId }: { equineId: string }) {
               </table>
             </div>
             <p style={{ fontSize: '0.75rem', color: C.muted, marginTop: '0.75rem', lineHeight: 1.5 }}>
-              Validade estimada em {EXAM_VALIDITY_DAYS} dias após a colheita; confira a data no laudo. Os PDFs são
-              guardados no EquiCore durante a sincronização.
+              Os PDFs são guardados no EquiCore durante a sincronização.
             </p>
           </>
         )}
-      </section>
+      </Section>
 
-      {/* Histórico de saúde */}
-      <section style={card}>
-        <h2 style={h2}>Histórico de saúde <span style={{ color: C.muted, fontWeight: 500 }}>({health.length})</span></h2>
+      {/* ── Histórico de saúde ── */}
+      <Section title="Histórico de saúde" count={health.length}>
         {health.length === 0 ? (
           <p style={{ fontSize: '0.875rem', color: C.muted }}>
             Nenhum registro de vacina, vermifugação, medicamento, pesagem, reprodução ou observação clínica.
@@ -259,7 +421,7 @@ export default function VetEquineHistory({ equineId }: { equineId: string }) {
                   <li key={h.id} style={{ borderTop: `1px solid ${C.border}`, padding: '0.5rem 0' }}>
                     <div style={{ fontSize: '0.8125rem', color: C.fg }}>
                       <strong>{h.title ?? HEALTH_LABEL[kind]}</strong>
-                      <span style={{ color: C.muted }}> · {brDate(h.event_date)}</span>
+                      <span style={{ color: C.muted }}> · {formatBrDate(h.event_date)}</span>
                     </div>
                     <div style={{ fontSize: '0.75rem', color: C.muted, marginTop: 2 }}>
                       {Object.entries(h.data).map(([key, value]) => `${key}: ${value}`).join(' · ')}
@@ -270,7 +432,9 @@ export default function VetEquineHistory({ equineId }: { equineId: string }) {
             </div>
           ))
         )}
-      </section>
-    </main>
+      </Section>
+
+      <Lightbox src={lightbox.src} onClose={lightbox.close} />
+    </Shell>
   );
 }

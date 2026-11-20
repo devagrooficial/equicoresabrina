@@ -7,6 +7,6 @@ import VetEquineHistory from '../../../components/vet/VetEquineHistory';
 const { id } = Astro.params;
 ---
 
-<VetLayout title="Histórico do animal — Equicore Vet">
+<VetLayout title="Ficha do animal — Equicore Vet">
   <VetEquineHistory client:load equineId={id ?? ''} />
 </VetLayout>

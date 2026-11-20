@@ -96,7 +96,7 @@ export default function PropriedadeForm({ editId = null }: Props) {
     }
 
     if (safeEditId) {
-      window.location.href = '/vet/registros?tab=propriedades';
+      window.location.href = `/vet/propriedade/${safeEditId}`;
     } else {
       setSuccess(true);
       setName(''); setAddress(''); setOesaCode(''); setUf(''); setCity('');

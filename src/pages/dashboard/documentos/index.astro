@@ -6,6 +6,7 @@ import Header from '../../../components/dashboard/Header';
 import { createServerSupabaseClient } from '../../../lib/supabase';
 import { examValidity, EXAM_GROUP_LABEL, formatBrDate, latestExam, overallState, type ExamGroup, type ExamState } from '../../../lib/examStatus';
 import type { ExamType } from '../../../lib/sgq/labels';
+import { loadEquineLinks } from '../../../lib/vetLinks';
 
 const responseHeaders = new Headers();
 const supabase = createServerSupabaseClient(Astro.request, responseHeaders);
@@ -24,8 +25,11 @@ const { data: alertDocs } = await supabase
 // para mostrar a situação sanitária de cada um.
 const { data: vetAnimalsRaw } = await supabase
   .from('vet_equines')
-  .select('id, name, species, breed, sex')
+  .select('id, name, species, breed, sex, property_id')
   .order('name');
+// Nome da propriedade de cada animal (cadastro do veterinário, lido no servidor
+// só para os animais que o RLS liberou acima)
+const vetLinks = await loadEquineLinks(vetAnimalsRaw ?? []);
 const { data: vetExamsRaw } = await supabase
   .from('vet_equine_exams')
   .select('equine_id, exam_type, collection_date');
@@ -50,6 +54,7 @@ const vetAnimals = (vetAnimalsRaw ?? []).map((a: any) => {
   const overall = overallState(exams);
   return {
     ...a,
+    property: a.property_id ? vetLinks.properties.get(a.property_id) ?? null : null,
     overall,
     lines: (['aie', 'mormo'] as ExamGroup[]).map(group => {
       const validity = examValidity(latestExam(exams, group)?.collection_date);
@@ -112,7 +117,7 @@ function fmtDate(d: string | null) {
           <span class="text-xs text-muted-foreground">{vetAnimals.length} {vetAnimals.length === 1 ? 'animal' : 'animais'}</span>
         </div>
         <p class="text-xs text-muted-foreground mb-3">
-          Exames de AIE e mormo, laudos, resenha e histórico de saúde registrados pelo veterinário.
+          Exames de AIE e mormo, laudos, resenha, histórico de saúde e a propriedade onde cada animal fica.
         </p>
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {vetAnimals.map((a: any) => (
@@ -121,6 +126,12 @@ function fmtDate(d: string | null) {
                 <div class="min-w-0">
                   <p class="text-sm font-bold text-foreground truncate">{a.name}</p>
                   <p class="text-xs text-muted-foreground truncate">{[a.breed, a.sex].filter(Boolean).join(' · ') || a.species || 'Equino'}</p>
+                  {a.property && (
+                    <p class="text-xs text-muted-foreground truncate flex items-center gap-1 mt-0.5">
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="flex-shrink-0"><path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/></svg>
+                      <span class="truncate">{a.property.name}</span>
+                    </p>
+                  )}
                 </div>
                 <span class="text-xs font-bold px-2 py-0.5 rounded-full whitespace-nowrap flex-shrink-0"
                       style={`background: ${TONE[a.overall as ExamState | 'none'].soft}; color: ${TONE[a.overall as ExamState | 'none'].color};`}>

@@ -21,6 +21,14 @@ if (error || !row) {
   return Astro.redirect('/dashboard/plantel');
 }
 
+// Proprietário e propriedade: no cadastro do dono são o próprio usuário e o
+// haras do perfil dele.
+const { data: profile } = await supabase
+  .from('profiles')
+  .select('full_name, farm_name, farm_city, farm_state')
+  .eq('id', row.user_id ?? '')
+  .maybeSingle();
+
 function calcAge(birthDate: string | null, estimatedAge: number | null): string {
   if (birthDate) {
     const months = Math.floor((Date.now() - new Date(birthDate).getTime()) / (1000 * 60 * 60 * 24 * 30.44));
@@ -85,6 +93,9 @@ const equineData = {
   patGrandmother: row.pat_grandmother,
   matGrandfather: row.mat_grandfather,
   matGrandmother: row.mat_grandmother,
+  ownerName: profile?.full_name ?? null,
+  farmName: profile?.farm_name ?? null,
+  farmPlace: [profile?.farm_city, profile?.farm_state].filter(Boolean).join('/') || null,
 };
 ---
 

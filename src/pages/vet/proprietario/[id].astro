@@ -1,0 +1,12 @@
+---
+export const prerender = false;
+
+import VetLayout from '../../../layouts/VetLayout.astro';
+import VetOwnerDetail from '../../../components/vet/VetOwnerDetail';
+
+const { id } = Astro.params;
+---
+
+<VetLayout title="Proprietário — Equicore Vet">
+  <VetOwnerDetail client:load ownerId={id ?? ''} />
+</VetLayout>

@@ -1,0 +1,105 @@
+---
+// Vínculos de um animal acompanhado pelo veterinário, na visão do dono:
+// em nome de quem está o cadastro, a propriedade onde o animal fica (com os
+// outros animais do dono no mesmo lugar) e o veterinário responsável.
+import { maskCpfCnpj } from '../../lib/br';
+import type { LinkedOwner, LinkedProperty, LinkedVet } from '../../lib/vetLinks';
+
+interface Props {
+  owner: LinkedOwner | null;
+  property: LinkedProperty | null;
+  vet: LinkedVet | null;
+  /** Outros animais do dono na mesma propriedade */
+  neighbors: { id: string; name: string }[];
+}
+
+const { owner, property, vet, neighbors } = Astro.props;
+const propertyPlace = property ? [property.city, property.uf].filter(Boolean).join('/') : '';
+---
+
+<section aria-labelledby="vinculos">
+  <h2 id="vinculos" class="text-base font-bold tracking-tight text-foreground mb-3">Proprietário, propriedade e veterinário</h2>
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+
+    <article class="rounded-2xl border bg-card p-5">
+      <p class="link-eyebrow">
+        <span class="link-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
+        Proprietário
+      </p>
+      {owner ? (
+        <>
+          <p class="text-base font-bold tracking-tight text-foreground mt-2 break-words">{owner.name}</p>
+          <p class="text-sm text-muted-foreground mt-1">{owner.cpf_cnpj.length > 11 ? 'CNPJ' : 'CPF'} {maskCpfCnpj(owner.cpf_cnpj)}</p>
+          <p class="text-xs text-muted-foreground mt-3 leading-relaxed">É em seu nome que o veterinário cadastrou este animal.</p>
+        </>
+      ) : (
+        <p class="text-sm text-muted-foreground mt-2">Cadastro em seu nome.</p>
+      )}
+    </article>
+
+    <article class="rounded-2xl border bg-card p-5" style={property ? '' : 'border-style: dashed;'}>
+      <p class="link-eyebrow">
+        <span class="link-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/></svg></span>
+        Propriedade
+      </p>
+      {property ? (
+        <>
+          <p class="text-base font-bold tracking-tight text-foreground mt-2 break-words">{property.name}</p>
+          <p class="text-sm text-muted-foreground mt-1">
+            {[propertyPlace, property.classification].filter(Boolean).join(' · ') || 'Local não informado'}
+          </p>
+          {property.oesa_code && <p class="text-sm text-muted-foreground">Nº OESA {property.oesa_code}</p>}
+          {neighbors.length > 0 && (
+            <div class="mt-3 pt-3 border-t">
+              <p class="text-xs text-muted-foreground mb-1.5">
+                {neighbors.length === 1 ? 'Outro animal seu nesta propriedade' : `Outros ${neighbors.length} animais seus nesta propriedade`}
+              </p>
+              <div class="flex flex-wrap gap-1.5">
+                {neighbors.slice(0, 8).map(n => (
+                  <a href={`/dashboard/documentos/${n.id}`} class="neighbor text-xs font-semibold px-2.5 py-1 rounded-full no-underline">{n.name}</a>
+                ))}
+                {neighbors.length > 8 && <span class="text-xs text-muted-foreground px-1 py-1">e mais {neighbors.length - 8}</span>}
+              </div>
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          <p class="text-base font-bold text-foreground mt-2">Não informada</p>
+          <p class="text-xs text-muted-foreground mt-1 leading-relaxed">O veterinário ainda não indicou em que propriedade este animal fica.</p>
+        </>
+      )}
+    </article>
+
+    <article class="rounded-2xl border bg-card p-5">
+      <p class="link-eyebrow">
+        <span class="link-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 2v2"/><path d="M5 2v2"/><path d="M5 3H4a2 2 0 0 0-2 2v4a6 6 0 0 0 12 0V5a2 2 0 0 0-2-2h-1"/><path d="M8 15a6 6 0 0 0 12 0v-3"/><circle cx="20" cy="10" r="2"/></svg></span>
+        Veterinário
+      </p>
+      {vet?.full_name ? (
+        <>
+          <p class="text-base font-bold tracking-tight text-foreground mt-2 break-words">{vet.full_name}</p>
+          <p class="text-sm text-muted-foreground mt-1">
+            {[vet.crmv ? `CRMV ${vet.crmv}` : null, vet.specialty].filter(Boolean).join(' · ') || 'Médico veterinário'}
+          </p>
+          <p class="text-xs text-muted-foreground mt-3 leading-relaxed">Registra os exames e o histórico deste animal.</p>
+        </>
+      ) : (
+        <p class="text-sm text-muted-foreground mt-2">Acompanhado pelo seu veterinário.</p>
+      )}
+    </article>
+
+  </div>
+</section>
+
+<style>
+  .text-foreground        { color: hsl(var(--foreground)); }
+  .text-muted-foreground  { color: hsl(var(--muted-foreground)); }
+  .bg-card                { background-color: hsl(var(--card)); }
+  .border, .border-t      { border-color: hsl(var(--border)); }
+  .link-eyebrow { display: flex; align-items: center; gap: 8px; font-size: 0.6875rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: hsl(var(--muted-foreground)); }
+  .link-icon    { width: 28px; height: 28px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; background: hsl(168 83% 29% / 0.10); color: hsl(168 83% 29%); }
+  .neighbor     { background: hsl(168 83% 29% / 0.08); color: hsl(168 83% 29%); }
+  .neighbor:hover { background: hsl(168 83% 29% / 0.16); }
+  .neighbor:focus-visible { outline: 2px solid hsl(168 83% 29%); outline-offset: 2px; }
+</style>

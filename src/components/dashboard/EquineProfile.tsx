@@ -103,6 +103,10 @@ export interface EquineProfileData {
   patGrandmother?: string | null;
   matGrandfather?: string | null;
   matGrandmother?: string | null;
+  // Vínculos (perfil do dono)
+  ownerName?: string | null;
+  farmName?: string | null;
+  farmPlace?: string | null;
 }
 
 const BREED_LABEL: Record<string, string> = {
@@ -166,6 +170,8 @@ const ICONS = {
   warn: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
   leaf: '<path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z"/><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/>',
   dna: '<path d="M2 15c6.667-6 13.333 0 20-6"/><path d="M9 22c1.798-1.998 2.518-3.995 2.807-5.993"/><path d="M22 9c-1.798 1.998-2.518 3.995-2.807 5.993"/><path d="m2 9 4 4"/><path d="m18 15 4 4"/><path d="m2 15 4-4"/><path d="m18 9 4-4"/>',
+  user: '<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+  pin: '<path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/>',
   drop: '<path d="M12 22a7 7 0 0 0 7-7c0-2-1-3.9-3-5.5s-3.5-4-4-6.5c-.5 2.5-2 4.9-4 6.5C6 11.1 5 13 5 15a7 7 0 0 0 7 7z"/>',
   wheat: '<path d="M2 22 16 8"/><path d="M3.47 12.53 5 11l1.53 1.53a3.5 3.5 0 0 1 0 4.94L5 19l-1.53-1.53a3.5 3.5 0 0 1 0-4.94z"/><path d="M7.47 8.53 9 7l1.53 1.53a3.5 3.5 0 0 1 0 4.94L9 15l-1.53-1.53a3.5 3.5 0 0 1 0-4.94z"/><path d="M11.47 4.53 13 3l1.53 1.53a3.5 3.5 0 0 1 0 4.94L13 11l-1.53-1.53a3.5 3.5 0 0 1 0-4.94z"/><path d="M20 2H22v2a4 4 0 0 1-4 4h-2V6a4 4 0 0 1 4-4z"/><path d="M11.47 17.47 13 19l-1.53 1.53a3.5 3.5 0 0 1-4.94 0L5 19l1.53-1.53a3.5 3.5 0 0 1 4.94 0z"/><path d="M15.47 13.47 17 15l-1.53 1.53a3.5 3.5 0 0 1-4.94 0L9 15l1.53-1.53a3.5 3.5 0 0 1 4.94 0z"/><path d="M19.47 9.47 21 11l-1.53 1.53a3.5 3.5 0 0 1-4.94 0L13 11l1.53-1.53a3.5 3.5 0 0 1 4.94 0z"/>',
 };
@@ -349,6 +355,51 @@ function GenealogyTree({ equine }: { equine: EquineProfileData }) {
   );
 }
 
+// De quem é o animal e onde ele fica. No cadastro do dono, os dois vêm do
+// perfil: o próprio usuário e o haras dele.
+function OwnershipCard({ equine }: { equine: EquineProfileData }) {
+  const cell: React.CSSProperties = { display: 'flex', alignItems: 'flex-start', gap: 10, minWidth: 0 };
+  const badge: React.CSSProperties = {
+    width: 30, height: 30, borderRadius: 8, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+    background: C.greenLight, color: C.green,
+  };
+  const editLink: React.CSSProperties = { color: C.green, fontWeight: 600, textDecoration: 'none', fontSize: 12 };
+  return (
+    <div style={s.card}>
+      <SectionLabel label="Proprietário e propriedade" />
+      <div className="eq-health-grid">
+        <div style={cell}>
+          <span style={badge}><Svg d={ICONS.user} size={15} /></span>
+          <div style={{ minWidth: 0 }}>
+            <p style={{ fontSize: 11, color: C.muted, fontWeight: 600 }}>Proprietário</p>
+            <p style={{ fontSize: 14, color: C.fg, fontWeight: 600, marginTop: 1, overflowWrap: 'anywhere' }}>{equine.ownerName || 'Você'}</p>
+            <p style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Cadastro feito por você.</p>
+          </div>
+        </div>
+        <div style={cell}>
+          <span style={badge}><Svg d={ICONS.pin} size={15} /></span>
+          <div style={{ minWidth: 0 }}>
+            <p style={{ fontSize: 11, color: C.muted, fontWeight: 600 }}>Propriedade</p>
+            {equine.farmName ? (
+              <>
+                <p style={{ fontSize: 14, color: C.fg, fontWeight: 600, marginTop: 1, overflowWrap: 'anywhere' }}>{equine.farmName}</p>
+                <p style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
+                  {equine.farmPlace ?? <a href="/dashboard/perfil" style={editLink}>Informar cidade e estado →</a>}
+                </p>
+              </>
+            ) : (
+              <>
+                <p style={{ fontSize: 14, color: C.muted, fontWeight: 600, marginTop: 1 }}>Não informada</p>
+                <p style={{ marginTop: 2 }}><a href="/dashboard/perfil" style={editLink}>Informar o haras no perfil →</a></p>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function NutritionTab({ equine }: { equine: EquineProfileData }) {
   const items = [
     equine.feedKgDay ? { icon: ICONS.wheat, label: 'Ração diária', value: `${equine.feedKgDay} kg/dia${equine.feedBrand ? ` — ${equine.feedBrand}` : ''}` } : null,
@@ -361,6 +412,7 @@ function NutritionTab({ equine }: { equine: EquineProfileData }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <OwnershipCard equine={equine} />
       {items.length > 0 && (
         <div style={s.card}>
           <SectionLabel label="Nutrição" />
@@ -677,7 +729,7 @@ export const EquineProfile = ({ equine, alerts = [] }: { equine: EquineProfileDa
 
       {/* Tabs */}
       <div>
-        <div style={{ display: 'flex', gap: 4, padding: 4, background: 'hsl(var(--muted))', borderRadius: '0.875rem', width: 'fit-content', marginBottom: 16 }}>
+        <div style={{ display: 'flex', gap: 4, padding: 4, background: 'hsl(var(--muted))', borderRadius: '0.875rem', width: 'fit-content', maxWidth: '100%', overflowX: 'auto', marginBottom: 16 }}>
           {tabs.map(t => {
             const active = tab === t.id;
             return (

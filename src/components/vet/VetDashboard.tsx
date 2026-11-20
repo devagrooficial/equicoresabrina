@@ -248,7 +248,7 @@ export default function VetDashboard({ vetName, crmv, specialty }: VetDashboardP
             {recents.map((r, i) => {
               const initials = r.name.split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase();
               return (
-                <a key={r.id} href={`/vet/cadastros/equino?id=${r.id}`}
+                <a key={r.id} href={`/vet/equino/${r.id}`}
                    className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/30"
                    style={{ textDecoration: 'none', borderBottom: i < recents.length - 1 ? '1px solid hsl(var(--border))' : 'none' }}>
                   <div className="w-9 h-9 rounded-xl flex items-center justify-center text-xs font-bold text-white flex-shrink-0"

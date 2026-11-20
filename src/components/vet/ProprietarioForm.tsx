@@ -146,7 +146,7 @@ export default function ProprietarioForm({ editId = null, initialCpf = null }: P
     }
 
     if (safeEditId) {
-      window.location.href = '/vet/registros?tab=proprietarios';
+      window.location.href = `/vet/proprietario/${safeEditId}`;
     } else {
       setSuccess(true);
       setName(''); setCpfCnpj(''); setPhone(''); setEmail(''); setAddress('');

@@ -23,16 +23,19 @@ interface PropertyOption { id: string; name: string; }
 
 interface Props {
   editId?: string | null;
+  /** Cadastro novo aberto a partir da ficha de um proprietário ou de uma propriedade */
+  initialOwnerId?: string | null;
+  initialPropertyId?: string | null;
 }
 
-export default function EquinoVetForm({ editId = null }: Props) {
+export default function EquinoVetForm({ editId = null, initialOwnerId = null, initialPropertyId = null }: Props) {
   const [owners, setOwners]         = useState<OwnerOption[]>([]);
   const [properties, setProperties] = useState<PropertyOption[]>([]);
   const [vetId, setVetId]           = useState<string | null>(null);
 
   const [name, setName]                     = useState('');
-  const [ownerId, setOwnerId]               = useState('');
-  const [propertyId, setPropertyId]         = useState('');
+  const [ownerId, setOwnerId]               = useState(initialOwnerId && isValidUUID(initialOwnerId) ? initialOwnerId : '');
+  const [propertyId, setPropertyId]         = useState(initialPropertyId && isValidUUID(initialPropertyId) ? initialPropertyId : '');
   const [registryBrand, setRegistryBrand]   = useState('');
   const [chip, setChip]                     = useState('');
   const [species, setSpecies]               = useState('');
@@ -352,7 +355,7 @@ export default function EquinoVetForm({ editId = null }: Props) {
 
       if (dbErr) throw new Error(dbErr.message);
 
-      window.location.href = '/vet/registros?tab=equinos';
+      window.location.href = `/vet/equino/${equineId}`;
     } catch (err: unknown) {
       // Novo registro que falhou: remove arquivos órfãos
       if (!safeEditId && uploadedPaths.length > 0) {

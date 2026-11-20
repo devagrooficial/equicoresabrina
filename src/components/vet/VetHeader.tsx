@@ -39,7 +39,9 @@ function Logo() {
 function NavLink({ href, label, onClick, currentPath }: { href: string; label: string; onClick?: () => void; currentPath?: string }) {
   // usa o path vindo do servidor para evitar mismatch de hidratação
   const path = currentPath ?? '';
-  const isActive = href === '/vet' ? path === '/vet' : path.startsWith(href);
+  // As fichas de animal, proprietário e propriedade fazem parte de Registros
+  const isActive = href === '/vet' ? path === '/vet'
+    : path.startsWith(href) || (href === '/vet/registros' && /^\/vet\/(equino|proprietario|propriedade)\//.test(path));
   return (
     <a
       href={href}
