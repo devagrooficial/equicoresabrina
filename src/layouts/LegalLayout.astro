@@ -1,0 +1,55 @@
+---
+import Layout from './Layout.astro';
+
+interface Props {
+  title: string;
+  updatedAt: string;
+}
+const { title, updatedAt } = Astro.props;
+---
+
+<Layout title={`${title} — EquiCore`}>
+  <header class="legal-header">
+    <a href="/" aria-label="EquiCore — início">
+      <img src="/images/logodark.png" alt="EquiCore" class="logo logo-light" />
+      <img src="/images/logowhite.png" alt="EquiCore" class="logo logo-dark" />
+    </a>
+    <nav>
+      <a href="/termos">Termos de Uso</a>
+      <a href="/privacidade">Política de Privacidade</a>
+    </nav>
+  </header>
+
+  <main class="legal">
+    <h1>{title}</h1>
+    <p class="updated">Última atualização: {updatedAt}</p>
+    <slot />
+    <p class="back"><a href="/login">← Voltar para o login</a></p>
+  </main>
+</Layout>
+
+<style>
+  .legal-header {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    max-width: 760px; margin: 0 auto; padding: 1.25rem 1rem;
+    border-bottom: 1px solid hsl(var(--border));
+  }
+  .legal-header nav { display: flex; gap: 1rem; flex-wrap: wrap; justify-content: flex-end; }
+  .legal-header nav a { font-size: 0.8125rem; font-weight: 600; color: hsl(var(--muted-foreground)); text-decoration: none; }
+  .legal-header nav a:hover { color: hsl(168 83% 29%); }
+  .logo { height: 28px; width: auto; }
+  .logo-dark { display: none; }
+  :global(.dark) .logo-light { display: none; }
+  :global(.dark) .logo-dark { display: inline; }
+
+  .legal { max-width: 760px; margin: 0 auto; padding: 2rem 1rem 4rem; color: hsl(var(--foreground)); line-height: 1.7; font-size: 0.9375rem; }
+  .legal h1 { font-size: 1.75rem; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 0.25rem; }
+  .updated { font-size: 0.8125rem; color: hsl(var(--muted-foreground)); margin-bottom: 2rem; }
+  .legal :global(h2) { font-size: 1.125rem; font-weight: 700; margin: 2rem 0 0.5rem; }
+  .legal :global(p) { margin: 0 0 0.875rem; }
+  .legal :global(ul) { margin: 0 0 1rem; padding-left: 1.25rem; list-style: disc; }
+  .legal :global(li) { margin-bottom: 0.375rem; }
+  .legal :global(a) { color: hsl(168 83% 29%); font-weight: 600; text-decoration: none; }
+  .legal :global(strong) { font-weight: 700; }
+  .back { margin-top: 2.5rem; }
+</style>
